@@ -36,7 +36,7 @@ class Product extends Model
         return $this->hasMany(OrderDetail::class);
     }
 
-    public function image(): MorphMany
+    public function images(): MorphMany
     {
         return $this->morphMany(Image::class, 'imageable');
     }

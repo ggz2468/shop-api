@@ -37,7 +37,7 @@ class Member extends Model
         return $this->hasMany(Order::class);
     }
 
-    public function image(): MorphMany
+    public function images(): MorphMany
     {
         return $this->morphMany(Image::class, 'imageable');
     }
