@@ -47,5 +47,4 @@ php artisan migrate --seed
     ```bash
     npm run build
     ```
-7. 開啟網頁
-前往: <a href="http://127.0.0.1" target="_blank">http://127.0.0.1</a>
+7. 開啟瀏覽器並前往: <a href="http://127.0.0.1" target="_blank">http://127.0.0.1</a>
