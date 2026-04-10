@@ -30,11 +30,11 @@ cp .env.example .env
 ```
 4. 啟動開發環境
 ```bash
-docker-compose up -d nginx mysql redis workspace
+docker compose up -d nginx mysql redis workspace
 ```
 5. 初始化應用程式
 ```bash
-docker-compose exec workspace bash
+docker compose exec workspace bash
 php artisan key:generate
 php artisan migrate --seed
 ```
