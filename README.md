@@ -19,9 +19,10 @@
 git clone git@github.com:ggz2468/shop.git
 cd shop
 ```
-2. 安裝此專案所需的 Composer 套件
+2. 安裝此專案所需的套件
 ```bash
 composer install
+npm install
 ```
 3. 將 .env.example 複製為 .env
 ```bash
