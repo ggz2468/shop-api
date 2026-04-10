@@ -4,16 +4,20 @@
 <a href="https://chun-hung.idv.tw" target="_blank">自製電子商務網站</a>
 
 ### 開發環境
-1. Linux(RedHat Enterprise Linux)
-2. Apache 2.4.29
-3. MySQL 5.6
-4. PHP 8.0.9
-5. Laravel 12.x
+1. Linux(Debian GNU/Linux 12)
+2. nginx 1.29.8
+3. MySQL 8.4.8
+4. PHP 8.4.19
+5. Composer 2.9.5
+6. Laravel 12.x
+7. Docker 29.4.0
+8. Docker Compose v5.1.2
 
 ### 安裝步驟
-1. 下載此專案程式
+1. 下載此專案程式，並切換至專案目錄內
 ```bash
 git clone git@github.com:ggz2468/shop.git
+cd shop
 ```
 2. 安裝此專案所需的 Composer 套件
 ```bash
