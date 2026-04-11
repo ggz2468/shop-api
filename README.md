@@ -1,4 +1,4 @@
-# 自製電子商務網站
+# 自製電子商務 RESTful API 專案
 
 ### 成果網站
 <a href="https://chun-hung.idv.tw" target="_blank">自製電子商務網站</a>
