@@ -21,11 +21,10 @@ class ProductService
     /**
      * 依據建立時間由新到舊取得所有產品
      * 
-     * @return \Illuminate\Database\Eloquent\Collection
+     * @return array<int, array<string, mixed>>
      */
     public function getAllProducts()
     {
-        $products = $this->productRepository->get([], ['created_at', 'desc']);
-        return $products;
+        return $this->productRepository->getAllProducts();
     }
 }
