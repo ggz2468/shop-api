@@ -17,7 +17,7 @@ class ProductFactory extends Factory
      */
     public static function names(): array
     {
-        $imageDirectory = public_path('images/products');
+        $imageDirectory = public_path('storage/images/products');
         $productNames = array_map(fn ($imagePath) => basename($imagePath, '.gif'), explode(PHP_EOL, trim(shell_exec('ls ' . $imageDirectory . '/*.gif | grep -v "small"'))));
         return $productNames;
     }
