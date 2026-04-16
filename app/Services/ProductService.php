@@ -81,7 +81,7 @@ class ProductService
         ];
 
         // 將產品資料存入 Cache 中，並設定過期時間為 1 小時
-        Cache::put($cacheKey, $productData, 3600);
+        Cache::tags(['products'])->put($cacheKey, $productData, 3600);
 
         return $productData;
     }
