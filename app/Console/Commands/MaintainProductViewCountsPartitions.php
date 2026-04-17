@@ -70,7 +70,7 @@ class MaintainProductViewCountsPartitions extends Command
             DB::statement($sqlStatement);
         }
 
-        // 刪除超過三個月前的所有月分區（僅處理 pYYYYMM，不包含 pmax）
+        // 取得超過三個月前的所有月分區（僅處理 pYYYYMM，不包含 pmax）
         $cutoffMonth = $thisMonthStart->modify('-3 months')->format('Ym');
         $partitions = DB::select(
             'SELECT partition_name AS partition_name FROM information_schema.partitions WHERE table_schema = DATABASE() AND table_name = ? AND partition_name IS NOT NULL',
@@ -95,6 +95,7 @@ class MaintainProductViewCountsPartitions extends Command
             }
         }
 
+        // 刪除超過三個月前的所有月分區
         if (!empty($expiredPartitions)) {
             $partitionList = implode(', ', $expiredPartitions);
             DB::statement("ALTER TABLE product_view_counts DROP PARTITION {$partitionList}");
