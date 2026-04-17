@@ -4,7 +4,6 @@ namespace App\Console\Commands;
 
 use Illuminate\Console\Command;
 use App\Models\Product;
-use App\Models\ProductViewCount;
 use Illuminate\Support\Facades\Cache;
 use Illuminate\Support\Facades\DB;
 use Illuminate\Support\Facades\Redis;
@@ -40,19 +39,22 @@ class SyncProductViewCounts extends Command
                 // 更新產品被瀏覽次數到資料庫
                 Product::where('id', $productId)->increment('view_counts', (int) $viewCounts);
 
-                // 取得或新增產品被瀏覽次數資料
-                $productViewCount = ProductViewCount::firstOrCreate(
-                    [
+                // 更新產品被瀏覽次數到 product_view_counts 資料表中
+                $updatedRows = DB::table('product_view_counts')
+                    ->where('product_id', $productId)
+                    ->where('recorded_at', $recordedAt)
+                    ->update([
+                        'view_counts' => DB::raw('view_counts + ' . (int) $viewCounts),
+                    ]);
+
+                // 若 product_view_counts 資料表中沒有相對應的資料，則直接新增一筆新的資料
+                if ($updatedRows === 0) {
+                    DB::table('product_view_counts')->insert([
                         'product_id' => $productId,
                         'recorded_at' => $recordedAt,
-                    ],
-                    [
-                        'view_counts' => 0,
-                    ]
-                );
-
-                // 額外新增產品被瀏覽次數與紀錄時間到資料庫中，以便後續分析使用
-                $productViewCount->increment('view_counts', (int) $viewCounts);
+                        'view_counts' => (int) $viewCounts,
+                    ]);
+                }
             }
         });
 
