@@ -58,6 +58,9 @@ class SyncProductViewCounts extends Command
             }
         });
 
+        // 清除產品列表索引快取，確保分頁 key 都能失效
+        Cache::tags(['products_index'])->flush();
+
         // 將所有產品資料的 Cache 清除，以確保下一次讀取時能從資料庫獲取最新的被瀏覽次數
         Cache::tags(['products'])->flush();
 
