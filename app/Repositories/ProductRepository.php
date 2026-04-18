@@ -23,16 +23,16 @@ class ProductRepository extends Repository
     /**
      * 取得產品
      * 
-     * @param int $perPage 每頁資料筆數
+     * @param int $rowCountsPerPage 每頁資料筆數
      * @param int $page 頁碼
      * @return array<int, array<string, mixed>>
      */
-    public function getProducts(int $perPage = 10, int $page = 1)
+    public function getProducts(int $rowCountsPerPage = 10, int $page = 1)
     {
         // 取得產品編號
-        $productIdsCacheKey = "product_ids:page:{$page}:per_page:{$perPage}";
-        $productIds = Cache::tags(['products_index'])->remember($productIdsCacheKey, 3600, function () use ($perPage, $page) {
-            return collect($this->paginate([], ['images'], [self::DEFAULT_SORT_FIELD, self::DEFAULT_SORT_DIRECTION], $perPage, $page)->items())
+        $productIdsCacheKey = "product_ids:page:{$page}:row_counts_per_page:{$rowCountsPerPage}";
+        $productIds = Cache::tags(['products_index'])->remember($productIdsCacheKey, 3600, function () use ($rowCountsPerPage, $page) {
+            return collect($this->paginate([], ['images'], [self::DEFAULT_SORT_FIELD, self::DEFAULT_SORT_DIRECTION], $rowCountsPerPage, $page)->items())
                 ->pluck('id')
                 ->all();
         });

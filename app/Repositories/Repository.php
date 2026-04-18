@@ -99,16 +99,16 @@ abstract class Repository
      * @param array<int, array<int, mixed>> $conditions
      * @param array<int, string> $relations
      * @param array<int, string> $orderBy
-     * @param int $perPage
+     * @param int $rowCountsPerPage
      * @param int $page
      * @return \Illuminate\Contracts\Pagination\LengthAwarePaginator
      */
-    public function paginate(array $conditions, array $relations = [], array $orderBy = ['id', 'asc'], int $perPage = 10, int $page = 1)
+    public function paginate(array $conditions, array $relations = [], array $orderBy = ['id', 'asc'], int $rowCountsPerPage = 10, int $page = 1)
     {
         return $this->filter($conditions)
             ->with($relations)
             ->orderBy(...$orderBy)
-            ->paginate($perPage, ['*'], 'page', $page);
+            ->paginate($rowCountsPerPage, ['*'], 'page', $page);
     }
 
     /**

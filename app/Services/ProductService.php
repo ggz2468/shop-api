@@ -10,11 +10,11 @@ use Illuminate\Support\Facades\Redis;
 class ProductService
 {
     /**
-     * 預設取得資料筆數
+     * 預設每頁資料筆數
      * 
      * @var int
      */
-    public const int DEFAULT_ROW_COUNT = 10;
+    public const int DEFAULT_ROW_COUNTS_PER_PAGE = 10;
 
     /**
      * 建構子
@@ -31,11 +31,12 @@ class ProductService
     /**
      * 取得熱門產品: 熱門產品為依據被瀏覽次數由多至少前十名的產品
      * 
+     * @param int $rowCountsPerPage 每頁資料筆數
      * @return array<int, array<string, mixed>>
      */
-    public function getPopularProducts()
+    public function getPopularProducts(int $rowCountsPerPage = self::DEFAULT_ROW_COUNTS_PER_PAGE)
     {
-        return $this->productRepository->getProducts(self::DEFAULT_ROW_COUNT);
+        return $this->productRepository->getProducts($rowCountsPerPage);
     }
 
     /**
