@@ -10,13 +10,6 @@ use Illuminate\Support\Facades\Redis;
 class ProductService
 {
     /**
-     * 預設排序欄位
-     * 
-     * @var string
-     */
-    public const string DEFAULT_SORT_FIELD = 'view_counts';
-
-    /**
      * 預設取得資料筆數
      * 
      * @var int
@@ -42,13 +35,7 @@ class ProductService
      */
     public function getPopularProducts()
     {
-        $products = $this->productRepository->getAllProducts();
-        $products = collect($products)
-            ->sortByDesc(self::DEFAULT_SORT_FIELD)
-            ->values()
-            ->take(self::DEFAULT_ROW_COUNT)
-            ->all();
-        return $products;
+        return $this->productRepository->getProducts(self::DEFAULT_ROW_COUNT);
     }
 
     /**
