@@ -63,26 +63,27 @@ class ProductRepository extends Repository
         );
 
         // 取得不存在於 Cache 中的產品資料
-        $missingProducts = $this->modelClassName::with('images')->whereIn('id', $missingProductIds)->get()->map(fn ($product) => [
-            'id' => $product->id,
-            'product_spec_id' => $product->product_spec_id,
-            'name' => $product->name,
-            'price' => $product->price,
-            'description' => $product->description,
-            'view_counts' => $product->view_counts,
-            'image_path' => $product->images->first()?->url ?? '/storage/images/products/default.png',
-        ])->all();
+        $missingProducts = $this->modelClassName::with('images')
+            ->whereIn('id', $missingProductIds)
+            ->get()
+            ->mapWithKeys(fn ($product) => [
+                "product:{$product->id}" => [
+                    'id' => $product->id,
+                    'product_spec_id' => $product->product_spec_id,
+                    'name' => $product->name,
+                    'price' => $product->price,
+                    'description' => $product->description,
+                    'view_counts' => $product->view_counts,
+                    'image_path' => $product->images->first()?->url ?? '/storage/images/products/default.png',
+                ],
+            ])
+            ->all();
 
         // 將原先不存在於 Cache 中的產品資料存入 Cache
-        Cache::tags(['products'])->putMany(
-            array_combine(array_map(fn ($id) => "product:{$id}", $missingProductIds), $missingProducts), 3600
-        );
+        Cache::tags(['products'])->putMany($missingProducts, 3600);
 
         // 將原先存在於 Cache 中的產品資料與剛剛從資料庫中取得的產品資料合併
-        $products = array_merge(
-            $products,
-            array_combine(array_map(fn ($id) => "product:{$id}", $missingProductIds), $missingProducts)
-        );
+        $products = array_merge($products, $missingProducts);
 
         // 再次將產品資料排序
         $products = collect($products)
