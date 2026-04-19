@@ -47,8 +47,8 @@ class ProductService
         Redis::zIncrby('product_view_counts', 1, (string) $product->id);
 
         // 如果產品資料存在於 Cache 中，直接從 Cache 中取得並回傳
-        if (Cache::has($cacheKey)) {
-            return Cache::get($cacheKey);
+        if (Cache::tags(['products'])->has($cacheKey)) {
+            return Cache::tags(['products'])->get($cacheKey);
         }
 
         $product->load('images');
