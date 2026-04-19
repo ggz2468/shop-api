@@ -21,13 +21,27 @@ class ProductRepository extends Repository
     public const string DEFAULT_SORT_DIRECTION = 'desc';
 
     /**
+     * 預設每頁資料筆數
+     * 
+     * @var int
+     */
+    public const int DEFAULT_ROW_COUNTS_PER_PAGE = 10;
+
+    /**
+     * 預設頁碼
+     * 
+     * @var int
+     */
+    public const int DEFAULT_PAGE = 1;
+
+    /**
      * 取得產品
      * 
      * @param int $rowCountsPerPage 每頁資料筆數
      * @param int $page 頁碼
      * @return array<int, array<string, mixed>>
      */
-    public function getProducts(int $rowCountsPerPage = 10, int $page = 1)
+    public function getProducts(int $rowCountsPerPage = self::DEFAULT_ROW_COUNTS_PER_PAGE, int $page = self::DEFAULT_PAGE)
     {
         // 取得產品編號
         $productIdsCacheKey = "product_ids:page:{$page}:row_counts_per_page:{$rowCountsPerPage}";
