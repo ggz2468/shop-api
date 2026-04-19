@@ -6,6 +6,7 @@ use Illuminate\Http\Request;
 use App\Services\ProductService;
 use App\Http\Resources\ProductResource;
 use App\Models\Product;
+use App\Repositories\ProductRepository;
 
 class ProductController extends Controller
 {
@@ -24,11 +25,23 @@ class ProductController extends Controller
     /**
      * 取得首頁所需的熱門商品列表
      * 
+     * @param \Illuminate\Http\Request $request
      * @return \Illuminate\Http\Resources\Json\AnonymousResourceCollection
      */
-    public function index()
+    public function index(Request $request)
     {
-        $products = $this->productService->getPopularProducts();
+        // 資料格式驗證
+        $validated = $request->validate([
+            'row_counts_per_page' => 'integer|min:10|max:30|nullable',
+            'page' => 'integer|min:1|nullable',
+        ]);
+
+        $parameters = [
+            $validated['row_counts_per_page'] ?? ProductRepository::DEFAULT_ROW_COUNTS_PER_PAGE,
+            $validated['page'] ?? ProductRepository::DEFAULT_PAGE,
+        ];
+
+        $products = $this->productService->getPopularProducts(...$parameters);
         return ProductResource::collection($products);
     }
 
