@@ -37,4 +37,8 @@ docker compose exec --user=laradock workspace bash
 php artisan key:generate
 php artisan migrate --seed
 ```
-6. API 入口網址: http://127.0.0.1/api
+6. 新增次月的 Partition 分區
+```bash
+php artisan app:maintain-product-view-counts-partitions
+```
+7. API 入口網址: http://127.0.0.1/api
