@@ -33,7 +33,7 @@ class ProductController extends Controller
     {
         // 資料格式驗證
         $validated = $request->validate([
-            'row_counts_per_page' => 'integer|min:6|max:30|nullable',
+            'row_counts_per_page' => 'integer|min:1|max:30|nullable',
             'page' => 'integer|min:1|nullable',
         ]);
 
