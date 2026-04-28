@@ -21,7 +21,7 @@ return new class extends Migration
             $table->string('password', 255)->comment('密碼');
             $table->date('birth_date')->comment('生日');
             $table->text('address')->comment('住址');
-            $table->tinyInteger('gender')->comment('性別');
+            $table->unsignedTinyInteger('gender')->comment('性別');
             $table->timestamp('created_at')->nullable()->useCurrent();
             $table->timestamp('updated_at')->nullable()->useCurrent()->useCurrentOnUpdate();
             $table->timestamp('deleted_at')->nullable();
