@@ -12,6 +12,7 @@ use App\Models\Order;
 use App\Models\PaymentTransaction;
 use App\Repositories\OrderRepository;
 use App\Repositories\PaymentTransactionRepository;
+use Illuminate\Contracts\Queue\ShouldQueue;
 use Illuminate\Database\Eloquent\ModelNotFoundException;
 use Illuminate\Foundation\Testing\RefreshDatabase;
 use Illuminate\Support\Facades\Event;
@@ -20,6 +21,14 @@ use Tests\TestCase;
 class CreatePaymentTransactionTest extends TestCase
 {
     use RefreshDatabase;
+
+    /**
+     * OrderCreated: 建立付款交易應同步執行，避免訂單建立後立即查詢付款 checkout 時查無交易資料。
+     */
+    public function test_listener_creates_payment_transaction_synchronously(): void
+    {
+        $this->assertFalse(is_subclass_of(CreatePaymentTransaction::class, ShouldQueue::class));
+    }
 
     /**
      * OrderCreated: 應建立待付款金流交易並 dispatch PaymentInitiated。
