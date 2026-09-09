@@ -136,6 +136,7 @@ jobs:
 
             cd ../laradock
 
+            docker compose exec -T --user=laradock -w /var/www/shop-api workspace php artisan migrate --force
             docker compose exec -T --user=laradock -w /var/www/shop-api workspace php artisan config:cache
             docker compose exec -T --user=laradock -w /var/www/shop-api workspace php artisan route:cache
             docker compose exec -T --user=laradock -w /var/www/shop-api workspace php artisan view:cache
