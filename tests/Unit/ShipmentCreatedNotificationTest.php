@@ -2,6 +2,7 @@
 
 namespace Tests\Unit;
 
+use App\Enums\Shipment\Status as ShipmentStatus;
 use App\Models\Shipment;
 use App\Notifications\ShipmentCreatedNotification;
 use Illuminate\Foundation\Testing\RefreshDatabase;
@@ -16,7 +17,9 @@ class ShipmentCreatedNotificationTest extends TestCase
      */
     public function test_via_returns_mail_channel(): void
     {
-        $shipment = Shipment::factory()->create();
+        $shipment = Shipment::factory()->create([
+            'status' => ShipmentStatus::CREATED->value,
+        ]);
         $notification = new ShipmentCreatedNotification($shipment);
 
         $this->assertSame(['mail'], $notification->via($shipment->order->member));
@@ -28,6 +31,7 @@ class ShipmentCreatedNotificationTest extends TestCase
     public function test_to_mail_returns_shipment_created_mail_message(): void
     {
         $shipment = Shipment::factory()->create([
+            'status' => ShipmentStatus::CREATED->value,
             'tracking_number' => 'TRK202609060001',
             'recipient_name' => '王小明',
             'recipient_phone' => '0911222333',
@@ -52,6 +56,7 @@ class ShipmentCreatedNotificationTest extends TestCase
     public function test_to_array_returns_shipment_identifiers(): void
     {
         $shipment = Shipment::factory()->create([
+            'status' => ShipmentStatus::CREATED->value,
             'tracking_number' => 'TRK202609060002',
         ]);
         $notification = new ShipmentCreatedNotification($shipment);

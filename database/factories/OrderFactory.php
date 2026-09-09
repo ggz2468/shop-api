@@ -4,6 +4,7 @@ namespace Database\Factories;
 
 use App\Enums\Order\PaymentMethod;
 use App\Enums\Order\PaymentStatus;
+use App\Enums\Order\ShippingMethod;
 use App\Enums\Order\Status;
 use App\Models\Member;
 use Illuminate\Database\Eloquent\Factories\Factory;
@@ -31,6 +32,11 @@ class OrderFactory extends Factory
             'total_amount' => $subtotal + $taxAmount + $shippingFee,
             'tax_amount' => $taxAmount,
             'shipping_fee' => $shippingFee,
+            'shipping_method' => ShippingMethod::HOME_DELIVERY->value,
+            'store_type' => null,
+            'store_code' => null,
+            'store_name' => null,
+            'store_address' => null,
             'status' => Status::STOCKING->value,
             'payment_method' => $this->faker->randomElement(PaymentMethod::cases())->value,
             'payment_status' => PaymentStatus::UNPAID->value,

@@ -30,6 +30,9 @@ class ShipmentFactory extends Factory
             'recipient_phone' => $this->faker->regexify('09[0-9]{8}'),
             'recipient_address' => $this->faker->address(),
             'store_code' => null,
+            'store_type' => null,
+            'store_name' => null,
+            'store_address' => null,
             'request_payload' => [
                 'tracking_number' => $this->faker->unique()->numerify('REQ############'),
             ],

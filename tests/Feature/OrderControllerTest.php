@@ -4,7 +4,10 @@ namespace Tests\Feature;
 
 use App\Enums\Order\PaymentMethod;
 use App\Enums\Order\PaymentStatus;
+use App\Enums\Order\ShippingMethod;
 use App\Enums\Order\Status;
+use App\Enums\Order\StoreType;
+use App\Enums\PaymentTransaction\PaymentMethod as PaymentTransactionPaymentMethod;
 use App\Enums\PaymentTransaction\Provider;
 use App\Enums\PaymentTransaction\Status as PaymentTransactionStatus;
 use App\Events\OrderCreated;
@@ -35,6 +38,7 @@ class OrderControllerTest extends TestCase
     {
         $response = $this->postJson('/api/orders', [
             'payment_method' => PaymentMethod::CREDIT_CARD->value,
+            'shipping_method' => ShippingMethod::HOME_DELIVERY->value,
         ], [
             'Idempotency-Key' => '01J3QS2AJMZV09DNXQ2EE4NM2E',
         ]);
@@ -123,6 +127,7 @@ class OrderControllerTest extends TestCase
         foreach ([0, 99, 'abc'] as $paymentMethod) {
             $response = $this->postJson('/api/orders', [
                 'payment_method' => $paymentMethod,
+                'shipping_method' => ShippingMethod::HOME_DELIVERY->value,
             ], [
                 'Idempotency-Key' => '01J3QS2AJMZV09DNXQ2EE4NM2E',
             ]);
@@ -130,6 +135,107 @@ class OrderControllerTest extends TestCase
             $response->assertStatus(422)
                 ->assertJsonValidationErrors(['payment_method']);
         }
+    }
+
+    /**
+     * 建立訂單: 建立訂單時必須提供配送方式。
+     */
+    public function test_store_returns_422_when_shipping_method_is_missing(): void
+    {
+        $member = Member::factory()->create();
+        Sanctum::actingAs($member);
+
+        $orderService = Mockery::mock(OrderService::class);
+        $orderService->shouldReceive('storeOrder')->never();
+
+        $this->app->instance(OrderService::class, $orderService);
+
+        $response = $this->postJson('/api/orders', [
+            'payment_method' => PaymentMethod::CREDIT_CARD->value,
+        ], [
+            'Idempotency-Key' => '01J3QS2AJMZV09DNXQ2EE4NM2E',
+        ]);
+
+        $response->assertStatus(422)
+            ->assertJsonValidationErrors(['shipping_method']);
+    }
+
+    /**
+     * 建立訂單: 配送方式必須是系統支援的配送方式。
+     */
+    public function test_store_returns_422_when_shipping_method_is_invalid(): void
+    {
+        $member = Member::factory()->create();
+        Sanctum::actingAs($member);
+
+        $orderService = Mockery::mock(OrderService::class);
+        $orderService->shouldReceive('storeOrder')->never();
+
+        $this->app->instance(OrderService::class, $orderService);
+
+        foreach ([0, 99, 'abc'] as $shippingMethod) {
+            $response = $this->postJson('/api/orders', [
+                'payment_method' => PaymentMethod::CREDIT_CARD->value,
+                'shipping_method' => $shippingMethod,
+            ], [
+                'Idempotency-Key' => '01J3QS2AJMZV09DNXQ2EE4NM2E',
+            ]);
+
+            $response->assertStatus(422)
+                ->assertJsonValidationErrors(['shipping_method']);
+        }
+    }
+
+    /**
+     * 建立訂單: 超商取貨必須提供門市資訊。
+     */
+    public function test_store_returns_422_when_store_information_is_missing_for_convenience_store_shipping(): void
+    {
+        $member = Member::factory()->create();
+        Sanctum::actingAs($member);
+
+        $orderService = Mockery::mock(OrderService::class);
+        $orderService->shouldReceive('storeOrder')->never();
+
+        $this->app->instance(OrderService::class, $orderService);
+
+        $response = $this->postJson('/api/orders', [
+            'payment_method' => PaymentMethod::CREDIT_CARD->value,
+            'shipping_method' => ShippingMethod::CONVENIENCE_STORE->value,
+        ], [
+            'Idempotency-Key' => '01J3QS2AJMZV09DNXQ2EE4NM2E',
+        ]);
+
+        $response->assertStatus(422)
+            ->assertJsonValidationErrors(['store_type', 'store_code', 'store_name', 'store_address']);
+    }
+
+    /**
+     * 建立訂單: 超商類型必須是系統支援的超商通路。
+     */
+    public function test_store_returns_422_when_store_type_is_invalid(): void
+    {
+        $member = Member::factory()->create();
+        Sanctum::actingAs($member);
+
+        $orderService = Mockery::mock(OrderService::class);
+        $orderService->shouldReceive('storeOrder')->never();
+
+        $this->app->instance(OrderService::class, $orderService);
+
+        $response = $this->postJson('/api/orders', [
+            'payment_method' => PaymentMethod::CREDIT_CARD->value,
+            'shipping_method' => ShippingMethod::CONVENIENCE_STORE->value,
+            'store_type' => 'UNKNOWN',
+            'store_code' => 'STORE001',
+            'store_name' => '測試門市',
+            'store_address' => '台北市信義區測試路 1 號',
+        ], [
+            'Idempotency-Key' => '01J3QS2AJMZV09DNXQ2EE4NM2E',
+        ]);
+
+        $response->assertStatus(422)
+            ->assertJsonValidationErrors(['store_type']);
     }
 
     /**
@@ -144,7 +250,7 @@ class OrderControllerTest extends TestCase
         $orderService = Mockery::mock(OrderService::class);
         $orderService->shouldReceive('storeOrder')
             ->once()
-            ->with($member->id, $idempotencyKey, PaymentMethod::CREDIT_CARD->value)
+            ->with($member->id, $idempotencyKey, PaymentMethod::CREDIT_CARD->value, ShippingMethod::HOME_DELIVERY->value, null, null, null, null)
             ->andReturn([
                 'status' => 201,
                 'message' => '訂單已建立。',
@@ -153,6 +259,11 @@ class OrderControllerTest extends TestCase
                     'number' => 'ORD20260823K7P4XQ',
                     'status' => 3,
                     'payment_method' => PaymentMethod::CREDIT_CARD->value,
+                    'shipping_method' => ShippingMethod::HOME_DELIVERY->value,
+                    'store_type' => null,
+                    'store_code' => null,
+                    'store_name' => null,
+                    'store_address' => null,
                     'total_amount' => 1200,
                     'tax_amount' => 60,
                     'shipping_fee' => 80,
@@ -172,6 +283,7 @@ class OrderControllerTest extends TestCase
 
         $response = $this->postJson('/api/orders', [
             'payment_method' => PaymentMethod::CREDIT_CARD->value,
+            'shipping_method' => ShippingMethod::HOME_DELIVERY->value,
         ], [
             'Idempotency-Key' => $idempotencyKey,
         ]);
@@ -195,7 +307,7 @@ class OrderControllerTest extends TestCase
         $orderService = Mockery::mock(OrderService::class);
         $orderService->shouldReceive('storeOrder')
             ->once()
-            ->with($member->id, $idempotencyKey, PaymentMethod::CREDIT_CARD->value)
+            ->with($member->id, $idempotencyKey, PaymentMethod::CREDIT_CARD->value, ShippingMethod::HOME_DELIVERY->value, null, null, null, null)
             ->andReturn([
                 'status' => 200,
                 'message' => '訂單已存在。',
@@ -204,6 +316,11 @@ class OrderControllerTest extends TestCase
                     'number' => 'ORD20260823K7P4XQ',
                     'status' => 3,
                     'payment_method' => PaymentMethod::CREDIT_CARD->value,
+                    'shipping_method' => ShippingMethod::HOME_DELIVERY->value,
+                    'store_type' => null,
+                    'store_code' => null,
+                    'store_name' => null,
+                    'store_address' => null,
                     'total_amount' => 1200,
                     'tax_amount' => 60,
                     'shipping_fee' => 80,
@@ -215,6 +332,7 @@ class OrderControllerTest extends TestCase
 
         $response = $this->postJson('/api/orders', [
             'payment_method' => PaymentMethod::CREDIT_CARD->value,
+            'shipping_method' => ShippingMethod::HOME_DELIVERY->value,
         ], [
             'Idempotency-Key' => $idempotencyKey,
         ]);
@@ -248,6 +366,11 @@ class OrderControllerTest extends TestCase
 
         $response = $this->postJson('/api/orders', [
             'payment_method' => PaymentMethod::CREDIT_CARD->value,
+            'shipping_method' => ShippingMethod::CONVENIENCE_STORE->value,
+            'store_type' => StoreType::UNIMART->value,
+            'store_code' => 'UNIMART001',
+            'store_name' => '信義門市',
+            'store_address' => '台北市信義區測試路 1 號',
         ], [
             'Idempotency-Key' => $idempotencyKey,
         ]);
@@ -259,6 +382,11 @@ class OrderControllerTest extends TestCase
             ->assertJsonPath('data.shipping_fee', 0)
             ->assertJsonPath('data.status', Status::STOCKING->value)
             ->assertJsonPath('data.payment_method', PaymentMethod::CREDIT_CARD->value)
+            ->assertJsonPath('data.shipping_method', ShippingMethod::CONVENIENCE_STORE->value)
+            ->assertJsonPath('data.store_type', StoreType::UNIMART->value)
+            ->assertJsonPath('data.store_code', 'UNIMART001')
+            ->assertJsonPath('data.store_name', '信義門市')
+            ->assertJsonPath('data.store_address', '台北市信義區測試路 1 號')
             ->assertJsonPath('data.payment_status', PaymentStatus::UNPAID->value)
             ->assertJsonPath('data.items.0.product_variant_id', $productVariant->id)
             ->assertJsonPath('data.items.0.product_name', 'Cotton Shirt')
@@ -277,6 +405,11 @@ class OrderControllerTest extends TestCase
             'total_amount' => 1600,
             'tax_amount' => 77,
             'shipping_fee' => 0,
+            'shipping_method' => ShippingMethod::CONVENIENCE_STORE->value,
+            'store_type' => StoreType::UNIMART->value,
+            'store_code' => 'UNIMART001',
+            'store_name' => '信義門市',
+            'store_address' => '台北市信義區測試路 1 號',
             'status' => Status::STOCKING->value,
             'payment_method' => PaymentMethod::CREDIT_CARD->value,
             'payment_status' => PaymentStatus::UNPAID->value,
@@ -328,6 +461,7 @@ class OrderControllerTest extends TestCase
 
         $response = $this->postJson('/api/orders', [
             'payment_method' => PaymentMethod::CREDIT_CARD->value,
+            'shipping_method' => ShippingMethod::HOME_DELIVERY->value,
         ], [
             'Idempotency-Key' => '01J3QS2AJMZV09DNXQ2EE4NM2F',
         ]);
@@ -340,7 +474,7 @@ class OrderControllerTest extends TestCase
         $this->assertSame(Provider::ECPAY->value, $paymentTransaction->provider);
         $this->assertSame(PaymentTransactionStatus::PENDING->value, $paymentTransaction->status);
         $this->assertSame($order->total_amount, $paymentTransaction->amount);
-        $this->assertSame(PaymentMethod::CREDIT_CARD->value, $paymentTransaction->payment_method);
+        $this->assertSame(PaymentTransactionPaymentMethod::CREDIT_CARD->value, $paymentTransaction->payment_method);
         $this->assertSame('POST', $paymentTransaction->checkout_payload['method']);
         $this->assertSame('https://payment-stage.ecpay.com.tw/Cashier/AioCheckOut/V5', $paymentTransaction->checkout_payload['action']);
         $this->assertSame('3002599', $paymentTransaction->request_payload['MerchantID']);
@@ -359,12 +493,12 @@ class OrderControllerTest extends TestCase
         Notification::fake();
 
         $cases = [
-            [PaymentMethod::ATM, Provider::ECPAY, '01J3QS2AJMZV09DNXQ2EE4NM2N'],
-            [PaymentMethod::CVS, Provider::ECPAY, '01J3QS2AJMZV09DNXQ2EE4NM2P'],
-            [PaymentMethod::BARCODE, Provider::ECPAY, '01J3QS2AJMZV09DNXQ2EE4NM2Q'],
+            [PaymentMethod::ATM, PaymentTransactionPaymentMethod::ATM, Provider::ECPAY, '01J3QS2AJMZV09DNXQ2EE4NM2N'],
+            [PaymentMethod::CVS, PaymentTransactionPaymentMethod::CVS, Provider::ECPAY, '01J3QS2AJMZV09DNXQ2EE4NM2P'],
+            [PaymentMethod::BARCODE, PaymentTransactionPaymentMethod::BARCODE, Provider::ECPAY, '01J3QS2AJMZV09DNXQ2EE4NM2Q'],
         ];
 
-        foreach ($cases as [$paymentMethod, $provider, $idempotencyKey]) {
+        foreach ($cases as [$paymentMethod, $paymentTransactionPaymentMethod, $provider, $idempotencyKey]) {
             $member = Member::factory()->create();
             Sanctum::actingAs($member);
             $productVariant = ProductVariant::factory()->create([
@@ -376,6 +510,7 @@ class OrderControllerTest extends TestCase
 
             $response = $this->postJson('/api/orders', [
                 'payment_method' => $paymentMethod->value,
+                'shipping_method' => ShippingMethod::HOME_DELIVERY->value,
             ], [
                 'Idempotency-Key' => $idempotencyKey,
             ]);
@@ -386,7 +521,7 @@ class OrderControllerTest extends TestCase
             $this->assertDatabaseHas('payment_transactions', [
                 'order_id' => $response->json('data.id'),
                 'provider' => $provider->value,
-                'payment_method' => $paymentMethod->value,
+                'payment_method' => $paymentTransactionPaymentMethod->value,
                 'status' => PaymentTransactionStatus::PENDING->value,
             ]);
         }
@@ -411,11 +546,13 @@ class OrderControllerTest extends TestCase
 
         $firstResponse = $this->postJson('/api/orders', [
             'payment_method' => PaymentMethod::CREDIT_CARD->value,
+            'shipping_method' => ShippingMethod::HOME_DELIVERY->value,
         ], [
             'Idempotency-Key' => $idempotencyKey,
         ]);
         $secondResponse = $this->postJson('/api/orders', [
             'payment_method' => PaymentMethod::CREDIT_CARD->value,
+            'shipping_method' => ShippingMethod::HOME_DELIVERY->value,
         ], [
             'Idempotency-Key' => $idempotencyKey,
         ]);
@@ -444,6 +581,7 @@ class OrderControllerTest extends TestCase
 
         $response = $this->postJson('/api/orders', [
             'payment_method' => PaymentMethod::CREDIT_CARD->value,
+            'shipping_method' => ShippingMethod::HOME_DELIVERY->value,
         ], [
             'Idempotency-Key' => '01J3QS2AJMZV09DNXQ2EE4NM2H',
         ]);
@@ -471,6 +609,7 @@ class OrderControllerTest extends TestCase
 
         $response = $this->postJson('/api/orders', [
             'payment_method' => PaymentMethod::CREDIT_CARD->value,
+            'shipping_method' => ShippingMethod::HOME_DELIVERY->value,
         ], [
             'Idempotency-Key' => '01J3QS2AJMZV09DNXQ2EE4NM2I',
         ]);
@@ -526,7 +665,7 @@ class OrderControllerTest extends TestCase
         $orderService = Mockery::mock(OrderService::class);
         $orderService->shouldReceive('storeOrder')
             ->times(10)
-            ->with($member->id, Mockery::type('string'), PaymentMethod::CREDIT_CARD->value)
+            ->with($member->id, Mockery::type('string'), PaymentMethod::CREDIT_CARD->value, ShippingMethod::HOME_DELIVERY->value, null, null, null, null)
             ->andReturn([
                 'status' => 201,
                 'message' => '訂單已建立。',
@@ -537,6 +676,7 @@ class OrderControllerTest extends TestCase
         for ($attempt = 0; $attempt < 10; $attempt++) {
             $this->postJson('/api/orders', [
                 'payment_method' => PaymentMethod::CREDIT_CARD->value,
+                'shipping_method' => ShippingMethod::HOME_DELIVERY->value,
             ], [
                 'Idempotency-Key' => sprintf('01J3QS2AJMZV09DNXQ2EE4NM%02d', $attempt),
             ])->assertStatus(201);
@@ -544,6 +684,7 @@ class OrderControllerTest extends TestCase
 
         $this->postJson('/api/orders', [
             'payment_method' => PaymentMethod::CREDIT_CARD->value,
+            'shipping_method' => ShippingMethod::HOME_DELIVERY->value,
         ], [
             'Idempotency-Key' => '01J3QS2AJMZV09DNXQ2EE4NM99',
         ])->assertStatus(429);
@@ -558,7 +699,7 @@ class OrderControllerTest extends TestCase
         $orderService = Mockery::mock(OrderService::class);
         $orderService->shouldReceive('storeOrder')
             ->once()
-            ->with($member->id, $idempotencyKey, PaymentMethod::CREDIT_CARD->value)
+            ->with($member->id, $idempotencyKey, PaymentMethod::CREDIT_CARD->value, ShippingMethod::HOME_DELIVERY->value, null, null, null, null)
             ->andReturn([
                 'status' => $status,
                 'message' => $message,
@@ -568,6 +709,7 @@ class OrderControllerTest extends TestCase
 
         $response = $this->postJson('/api/orders', [
             'payment_method' => PaymentMethod::CREDIT_CARD->value,
+            'shipping_method' => ShippingMethod::HOME_DELIVERY->value,
         ], [
             'Idempotency-Key' => $idempotencyKey,
         ]);

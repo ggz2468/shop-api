@@ -1,6 +1,7 @@
 <?php
 
 use App\Enums\PaymentTransaction\Provider;
+use App\Enums\Shipment\Provider as ShipmentProvider;
 use App\Gateways\Payments\EcpayPaymentGateway;
 
 return [
@@ -52,6 +53,11 @@ return [
         'gateways' => [
             Provider::ECPAY->value => EcpayPaymentGateway::class,
         ],
+    ],
+
+    // 物流設定
+    'shipment' => [
+        'default_provider' => (int) env('SHIPMENT_DEFAULT_PROVIDER', ShipmentProvider::ECPAY_LOGISTICS->value),
     ],
 
     // 綠界金流

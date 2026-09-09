@@ -2,7 +2,8 @@
 
 namespace Tests\Unit;
 
-use App\Enums\Order\PaymentMethod;
+use App\Enums\Order\PaymentMethod as OrderPaymentMethod;
+use App\Enums\PaymentTransaction\PaymentMethod;
 use App\Gateways\Payments\EcpayPaymentGateway;
 use App\Models\Order;
 use App\Models\OrderDetail;
@@ -23,7 +24,7 @@ class EcpayPaymentGatewayTest extends TestCase
         $this->setEcpayConfig();
 
         $order = Order::factory()->create([
-            'payment_method' => PaymentMethod::CREDIT_CARD->value,
+            'payment_method' => OrderPaymentMethod::CREDIT_CARD->value,
             'total_amount' => 1280,
         ]);
         $productVariant = ProductVariant::factory()->create([
@@ -130,7 +131,7 @@ class EcpayPaymentGatewayTest extends TestCase
         config()->set('services.ecpay.client_redirect_url', null);
 
         $order = Order::factory()->create([
-            'payment_method' => PaymentMethod::ATM->value,
+            'payment_method' => OrderPaymentMethod::ATM->value,
         ]);
         $paymentTransaction = PaymentTransaction::factory()->for($order)->create([
             'payment_method' => PaymentMethod::ATM->value,

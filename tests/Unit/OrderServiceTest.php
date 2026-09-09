@@ -4,7 +4,9 @@ namespace Tests\Unit;
 
 use App\Enums\Order\PaymentMethod;
 use App\Enums\Order\PaymentStatus;
+use App\Enums\Order\ShippingMethod;
 use App\Enums\Order\Status;
+use App\Enums\Order\StoreType;
 use App\Events\OrderCreated;
 use App\Models\Member;
 use App\Models\Order;
@@ -64,6 +66,11 @@ class OrderServiceTest extends TestCase
             $member->id,
             '01J3QS2AJMZV09DNXQ2EE4NM2E',
             PaymentMethod::CREDIT_CARD->value,
+            ShippingMethod::CONVENIENCE_STORE->value,
+            'UNIMART001',
+            StoreType::UNIMART->value,
+            '信義門市',
+            '台北市信義區測試路 1 號',
         );
 
         $this->assertSame(201, $result['status']);
@@ -71,6 +78,11 @@ class OrderServiceTest extends TestCase
         $this->assertSame(1600, $result['data']['total_amount']);
         $this->assertSame(77, $result['data']['tax_amount']);
         $this->assertSame(0, $result['data']['shipping_fee']);
+        $this->assertSame(ShippingMethod::CONVENIENCE_STORE->value, $result['data']['shipping_method']);
+        $this->assertSame(StoreType::UNIMART->value, $result['data']['store_type']);
+        $this->assertSame('UNIMART001', $result['data']['store_code']);
+        $this->assertSame('信義門市', $result['data']['store_name']);
+        $this->assertSame('台北市信義區測試路 1 號', $result['data']['store_address']);
         $this->assertSame(Status::STOCKING->value, $result['data']['status']);
         $this->assertSame(PaymentStatus::UNPAID->value, $result['data']['payment_status']);
         $this->assertSame([
@@ -83,6 +95,9 @@ class OrderServiceTest extends TestCase
             'quantity' => 2,
             'subtotal' => 1600,
         ], $result['data']['items'][0]);
+        $this->assertSame(StoreType::UNIMART->value, $result['data']['store_type']);
+        $this->assertSame('信義門市', $result['data']['store_name']);
+        $this->assertSame('台北市信義區測試路 1 號', $result['data']['store_address']);
 
         $orderId = $result['data']['id'];
         $this->assertDatabaseHas('orders', [
@@ -92,6 +107,11 @@ class OrderServiceTest extends TestCase
             'total_amount' => 1600,
             'tax_amount' => 77,
             'shipping_fee' => 0,
+            'shipping_method' => ShippingMethod::CONVENIENCE_STORE->value,
+            'store_type' => StoreType::UNIMART->value,
+            'store_code' => 'UNIMART001',
+            'store_name' => '信義門市',
+            'store_address' => '台北市信義區測試路 1 號',
             'payment_method' => PaymentMethod::CREDIT_CARD->value,
             'payment_status' => PaymentStatus::UNPAID->value,
         ]);

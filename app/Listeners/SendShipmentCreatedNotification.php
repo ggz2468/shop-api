@@ -2,6 +2,7 @@
 
 namespace App\Listeners;
 
+use App\Enums\Shipment\Status as ShipmentStatus;
 use App\Events\ShipmentCreated;
 use App\Models\Shipment;
 use App\Notifications\ShipmentCreatedNotification;
@@ -27,6 +28,10 @@ class SendShipmentCreatedNotification implements ShouldQueue
         }
 
         $shipment->loadMissing('order.member');
+
+        if ($shipment->status !== ShipmentStatus::CREATED->value || $shipment->tracking_number === null) {
+            return;
+        }
 
         $shipment->order->member->notify(new ShipmentCreatedNotification($shipment));
     }

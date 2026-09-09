@@ -2,6 +2,8 @@
 
 namespace App\Listeners;
 
+use App\Enums\Order\PaymentMethod as OrderPaymentMethod;
+use App\Enums\PaymentTransaction\PaymentMethod;
 use App\Enums\PaymentTransaction\Provider;
 use App\Enums\PaymentTransaction\Status;
 use App\Events\OrderCreated;
@@ -47,7 +49,7 @@ class CreatePaymentTransaction
             'amount' => $order->total_amount,
             'currency' => 'TWD',
             'status' => Status::PENDING->value,
-            'payment_method' => $order->payment_method,
+            'payment_method' => $this->resolvePaymentMethod($order->payment_method)->value,
             'request_payload' => null,
             'checkout_payload' => null,
             'response_payload' => null,
@@ -65,6 +67,16 @@ class CreatePaymentTransaction
         }
 
         return $provider;
+    }
+
+    private function resolvePaymentMethod(int $paymentMethod): PaymentMethod
+    {
+        return match (OrderPaymentMethod::from($paymentMethod)) {
+            OrderPaymentMethod::CREDIT_CARD => PaymentMethod::CREDIT_CARD,
+            OrderPaymentMethod::ATM => PaymentMethod::ATM,
+            OrderPaymentMethod::CVS => PaymentMethod::CVS,
+            OrderPaymentMethod::BARCODE => PaymentMethod::BARCODE,
+        };
     }
 
     private function makeMerchantTradeNo(string $orderNumber): string

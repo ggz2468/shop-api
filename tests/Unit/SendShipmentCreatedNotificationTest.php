@@ -2,6 +2,7 @@
 
 namespace Tests\Unit;
 
+use App\Enums\Shipment\Status as ShipmentStatus;
 use App\Events\ShipmentCreated;
 use App\Listeners\SendShipmentCreatedNotification;
 use App\Models\Shipment;
@@ -17,13 +18,16 @@ class SendShipmentCreatedNotificationTest extends TestCase
     use RefreshDatabase;
 
     /**
-     * ShipmentCreated: 應通知出貨單所屬訂單的會員。
+     * ShipmentCreated: 物流單已建立且有追蹤編號時，應通知出貨單所屬訂單的會員。
      */
     public function test_handle_sends_shipment_created_notification_to_order_member(): void
     {
         Notification::fake();
 
-        $shipment = Shipment::factory()->create();
+        $shipment = Shipment::factory()->create([
+            'status' => ShipmentStatus::CREATED->value,
+            'tracking_number' => 'TRK202609090001',
+        ]);
 
         $this->makeListener()->handle(new ShipmentCreated($shipment->id));
 
@@ -32,6 +36,23 @@ class SendShipmentCreatedNotificationTest extends TestCase
             ShipmentCreatedNotification::class,
             fn (ShipmentCreatedNotification $notification): bool => $notification->toArray($shipment->order->member)['shipment_id'] === $shipment->id,
         );
+    }
+
+    /**
+     * ShipmentCreated: 物流單尚未由物流商建立成功時，不應寄送出貨通知。
+     */
+    public function test_handle_does_not_send_notification_when_shipment_is_not_created_by_provider(): void
+    {
+        Notification::fake();
+
+        $shipment = Shipment::factory()->create([
+            'status' => ShipmentStatus::PENDING->value,
+            'tracking_number' => null,
+        ]);
+
+        $this->makeListener()->handle(new ShipmentCreated($shipment->id));
+
+        Notification::assertNothingSent();
     }
 
     /**

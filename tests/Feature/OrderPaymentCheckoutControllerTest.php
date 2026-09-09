@@ -5,6 +5,7 @@ namespace Tests\Feature;
 use App\Enums\Order\PaymentMethod;
 use App\Enums\Order\PaymentStatus;
 use App\Enums\Order\Status as OrderStatus;
+use App\Enums\PaymentTransaction\PaymentMethod as PaymentTransactionPaymentMethod;
 use App\Enums\PaymentTransaction\Provider;
 use App\Enums\PaymentTransaction\Status as PaymentTransactionStatus;
 use App\Models\Member;
@@ -75,7 +76,7 @@ class OrderPaymentCheckoutControllerTest extends TestCase
             'merchant_trade_no' => 'PAY202609080000',
             'amount' => 1000,
             'currency' => 'TWD',
-            'payment_method' => PaymentMethod::CREDIT_CARD->value,
+            'payment_method' => PaymentTransactionPaymentMethod::CREDIT_CARD->value,
         ]);
         PaymentTransaction::factory()->for($order)->create([
             'provider' => Provider::ECPAY->value,
@@ -83,7 +84,7 @@ class OrderPaymentCheckoutControllerTest extends TestCase
             'merchant_trade_no' => 'PAY202609080000A',
             'amount' => 1080,
             'currency' => 'TWD',
-            'payment_method' => PaymentMethod::CREDIT_CARD->value,
+            'payment_method' => PaymentTransactionPaymentMethod::CREDIT_CARD->value,
             'checkout_payload' => [
                 'action' => 'https://example.test/old-payment',
                 'method' => 'POST',
@@ -101,7 +102,7 @@ class OrderPaymentCheckoutControllerTest extends TestCase
             'merchant_trade_no' => 'PAY202609080001',
             'amount' => 1280,
             'currency' => 'TWD',
-            'payment_method' => PaymentMethod::CREDIT_CARD->value,
+            'payment_method' => PaymentTransactionPaymentMethod::CREDIT_CARD->value,
             'checkout_payload' => [
                 'action' => 'https://payment-stage.ecpay.com.tw/Cashier/AioCheckOut/V5',
                 'method' => 'POST',
@@ -122,7 +123,7 @@ class OrderPaymentCheckoutControllerTest extends TestCase
             ->assertJsonPath('data.payment_transaction_id', $paymentTransaction->id)
             ->assertJsonPath('data.provider', Provider::ECPAY->value)
             ->assertJsonPath('data.status', PaymentTransactionStatus::PENDING->value)
-            ->assertJsonPath('data.payment_method', PaymentMethod::CREDIT_CARD->value)
+            ->assertJsonPath('data.payment_method', PaymentTransactionPaymentMethod::CREDIT_CARD->value)
             ->assertJsonPath('data.amount', 1280)
             ->assertJsonPath('data.currency', 'TWD')
             ->assertJsonPath('data.checkout_payload.method', 'POST')

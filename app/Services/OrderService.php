@@ -3,6 +3,7 @@
 namespace App\Services;
 
 use App\Enums\Order\PaymentStatus;
+use App\Enums\Order\ShippingMethod;
 use App\Enums\Order\Status;
 use App\Events\OrderCreated;
 use App\Models\Order;
@@ -77,11 +78,21 @@ class OrderService
      *
      * @return array<string, mixed>
      */
-    public function storeOrder(int $memberId, string $idempotencyKey, int $paymentMethod): array
-    {
+    public function storeOrder(
+        int $memberId,
+        string $idempotencyKey,
+        int $paymentMethod,
+        ?int $shippingMethod = null,
+        ?string $storeCode = null,
+        ?string $storeType = null,
+        ?string $storeName = null,
+        ?string $storeAddress = null,
+    ): array {
+        $shippingMethod ??= ShippingMethod::HOME_DELIVERY->value;
+
         try {
             return $this->cache->lock("checkout:member:{$memberId}", self::CHECKOUT_LOCK_SECONDS)
-                ->block(self::CHECKOUT_LOCK_WAIT_SECONDS, fn () => $this->storeOrderWithLock($memberId, $idempotencyKey, $paymentMethod));
+                ->block(self::CHECKOUT_LOCK_WAIT_SECONDS, fn () => $this->storeOrderWithLock($memberId, $idempotencyKey, $paymentMethod, $shippingMethod, $storeCode, $storeType, $storeName, $storeAddress));
         } catch (LockTimeoutException $e) {
             return [
                 'status' => 409,
@@ -133,6 +144,11 @@ class OrderService
             'total_amount' => $order->total_amount,
             'tax_amount' => $order->tax_amount,
             'shipping_fee' => $order->shipping_fee,
+            'shipping_method' => $order->shipping_method,
+            'store_type' => $order->store_type,
+            'store_code' => $order->store_code,
+            'store_name' => $order->store_name,
+            'store_address' => $order->store_address,
             'status' => $order->status,
             'payment_method' => $order->payment_method,
             'payment_status' => $order->payment_status,
@@ -152,7 +168,7 @@ class OrderService
     /**
      * @return array<string, mixed>
      */
-    private function storeOrderWithLock(int $memberId, string $idempotencyKey, int $paymentMethod): array
+    private function storeOrderWithLock(int $memberId, string $idempotencyKey, int $paymentMethod, int $shippingMethod, ?string $storeCode, ?string $storeType, ?string $storeName, ?string $storeAddress): array
     {
         try {
             // 取得既有訂單資料
@@ -179,7 +195,7 @@ class OrderService
             }
 
             $order = $existingOrder = null;
-            $this->db->transaction(function () use ($memberId, $idempotencyKey, $paymentMethod, &$cartItems, &$order, &$existingOrder) {
+            $this->db->transaction(function () use ($memberId, $idempotencyKey, $paymentMethod, $shippingMethod, $storeCode, $storeType, $storeName, $storeAddress, &$cartItems, &$order, &$existingOrder) {
                 // 取得既有訂單資料
                 $existingOrder = $this->orderRepository->first([
                     ['member_id', $memberId],
@@ -248,6 +264,11 @@ class OrderService
                     'total_amount' => $totalAmount + $this->calculateShippingFee($totalAmount),
                     'tax_amount' => $this->calculateTaxAmount($totalAmount),
                     'shipping_fee' => $this->calculateShippingFee($totalAmount),
+                    'shipping_method' => $shippingMethod,
+                    'store_type' => $storeType,
+                    'store_code' => $storeCode,
+                    'store_name' => $storeName,
+                    'store_address' => $storeAddress,
                     'status' => Status::STOCKING->value,
                     'payment_method' => $paymentMethod,
                     'payment_status' => PaymentStatus::UNPAID->value,

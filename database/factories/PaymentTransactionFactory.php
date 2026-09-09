@@ -2,7 +2,7 @@
 
 namespace Database\Factories;
 
-use App\Enums\Order\PaymentMethod;
+use App\Enums\PaymentTransaction\PaymentMethod;
 use App\Enums\PaymentTransaction\Provider;
 use App\Enums\PaymentTransaction\Status;
 use App\Models\Order;

@@ -2,8 +2,9 @@
 
 namespace Tests\Feature;
 
-use App\Enums\Order\PaymentMethod;
+use App\Enums\Order\PaymentMethod as OrderPaymentMethod;
 use App\Enums\Order\PaymentStatus;
+use App\Enums\PaymentTransaction\PaymentMethod;
 use App\Enums\PaymentTransaction\Provider;
 use App\Enums\PaymentTransaction\Status;
 use App\Gateways\Payments\EcpayPaymentGateway;
@@ -691,7 +692,7 @@ class EcpayPaymentCallbackControllerTest extends TestCase
     {
         $paymentMethod = $attributes['payment_method'] ?? PaymentMethod::CREDIT_CARD->value;
         $order = Order::factory()->create([
-            'payment_method' => $paymentMethod,
+            'payment_method' => OrderPaymentMethod::from($paymentMethod)->value,
             'payment_status' => PaymentStatus::UNPAID->value,
             'total_amount' => $attributes['amount'] ?? 1000,
         ]);

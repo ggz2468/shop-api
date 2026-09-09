@@ -2,9 +2,9 @@
 
 namespace Tests\Unit;
 
-use App\Enums\Order\PaymentMethod;
 use App\Enums\Order\PaymentStatus;
 use App\Enums\Order\Status as OrderStatus;
+use App\Enums\PaymentTransaction\PaymentMethod;
 use App\Enums\PaymentTransaction\Provider;
 use App\Enums\PaymentTransaction\Status as PaymentTransactionStatus;
 use App\Models\Member;

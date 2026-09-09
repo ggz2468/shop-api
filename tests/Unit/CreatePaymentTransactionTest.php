@@ -3,6 +3,7 @@
 namespace Tests\Unit;
 
 use App\Enums\Order\PaymentMethod;
+use App\Enums\PaymentTransaction\PaymentMethod as PaymentTransactionPaymentMethod;
 use App\Enums\PaymentTransaction\Provider;
 use App\Enums\PaymentTransaction\Status;
 use App\Events\OrderCreated;
@@ -51,7 +52,7 @@ class CreatePaymentTransactionTest extends TestCase
         $this->assertSame(1280, $paymentTransaction->amount);
         $this->assertSame('TWD', $paymentTransaction->currency);
         $this->assertSame(Status::PENDING->value, $paymentTransaction->status);
-        $this->assertSame(PaymentMethod::CREDIT_CARD->value, $paymentTransaction->payment_method);
+        $this->assertSame(PaymentTransactionPaymentMethod::CREDIT_CARD->value, $paymentTransaction->payment_method);
         $this->assertNull($paymentTransaction->request_payload);
         $this->assertNull($paymentTransaction->checkout_payload);
         $this->assertNull($paymentTransaction->response_payload);

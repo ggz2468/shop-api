@@ -3,7 +3,7 @@
 namespace App\Gateways\Payments;
 
 use App\Contracts\PaymentGateway;
-use App\Enums\Order\PaymentMethod;
+use App\Enums\PaymentTransaction\PaymentMethod;
 use App\Models\PaymentTransaction;
 use Illuminate\Contracts\Config\Repository as ConfigRepository;
 
