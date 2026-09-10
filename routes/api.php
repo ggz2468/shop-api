@@ -7,6 +7,7 @@ use App\Http\Controllers\OrderController;
 use App\Http\Controllers\OrderPaymentCheckoutController;
 use App\Http\Controllers\PasswordResetController;
 use App\Http\Controllers\ProductController;
+use App\Http\Controllers\ShipmentStoreMapRequestController;
 use App\Http\Controllers\VerificationController;
 use Illuminate\Support\Facades\Route;
 
@@ -64,6 +65,9 @@ Route::middleware(['auth:sanctum', 'throttle:orders'])->prefix('orders')->group(
     Route::patch('/{order}/cancel', [OrderController::class, 'cancel']);
     Route::get('/{order}/payment-checkout', [OrderPaymentCheckoutController::class, 'show']);
 });
+
+Route::middleware(['auth:sanctum', 'throttle:shipment-store-map-requests'])
+    ->post('/shipment-store-map-requests', [ShipmentStoreMapRequestController::class, 'store']);
 
 Route::post('/payment-callbacks/ecpay', EcpayPaymentCallbackController::class)
     ->middleware('throttle:payment-callbacks');

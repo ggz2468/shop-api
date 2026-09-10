@@ -158,6 +158,15 @@ class AppServiceProvider extends ServiceProvider
             ];
         });
 
+        RateLimiter::for('shipment-store-map-requests', function (Request $request): array {
+            $memberKey = (string) ($request->user()?->id ?? $request->ip());
+
+            return [
+                Limit::perMinute(10)->by('shipment-store-map-requests:minute:'.$memberKey),
+                Limit::perHour(50)->by('shipment-store-map-requests:hour:'.$request->ip()),
+            ];
+        });
+
         RateLimiter::for('payment-callbacks', function (Request $request): array {
             $merchantTradeNo = trim((string) $request->input('MerchantTradeNo'));
             $callbackKey = $merchantTradeNo !== '' ? $merchantTradeNo : $request->ip();

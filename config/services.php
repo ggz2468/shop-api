@@ -72,4 +72,17 @@ return [
         'client_back_url' => env('ECPAY_CLIENT_BACK_URL'),
     ],
 
+    // 綠界物流
+    'ecpay_logistics' => [
+        'merchant_id' => env('ECPAY_LOGISTICS_MERCHANT_ID'),
+        'hash_key' => env('ECPAY_LOGISTICS_HASH_KEY'),
+        'hash_iv' => env('ECPAY_LOGISTICS_HASH_IV'),
+        'create_action_url' => env('ECPAY_LOGISTICS_CREATE_ACTION_URL'),
+        'query_action_url' => env('ECPAY_LOGISTICS_QUERY_ACTION_URL'),
+        'store_map_action_url' => env('ECPAY_LOGISTICS_STORE_MAP_ACTION_URL'),
+        'store_map_server_reply_url' => env('ECPAY_LOGISTICS_STORE_MAP_SERVER_REPLY_URL'),
+        'store_map_client_redirect_url' => env('ECPAY_LOGISTICS_STORE_MAP_CLIENT_REDIRECT_URL'),
+        'store_map_request_ttl_minutes' => (int) env('ECPAY_LOGISTICS_STORE_MAP_REQUEST_TTL_MINUTES', 30),
+    ],
+
 ];

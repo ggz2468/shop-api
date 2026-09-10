@@ -55,6 +55,11 @@ class Member extends Authenticatable
         return $this->hasMany(Order::class);
     }
 
+    public function shipmentStoreMapRequests(): HasMany
+    {
+        return $this->hasMany(ShipmentStoreMapRequest::class);
+    }
+
     public function images(): MorphMany
     {
         return $this->morphMany(Image::class, 'imageable');
