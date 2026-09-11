@@ -3,6 +3,7 @@
 namespace App\Services;
 
 use App\Enums\ShipmentStoreMapRequest\StoreType;
+use App\Models\ShipmentStoreMapRequest;
 use App\Repositories\ShipmentStoreMapRequestRepository;
 use Illuminate\Contracts\Config\Repository as ConfigRepository;
 use Psr\Log\LoggerInterface;
@@ -95,6 +96,63 @@ class ShipmentStoreMapRequestService
     }
 
     /**
+     * 查詢超商電子地圖選擇結果。
+     *
+     * @return array<string, mixed>
+     */
+    public function getSelectionResult(int $memberId, string $selectionToken): array
+    {
+        try {
+            $shipmentStoreMapRequest = $this->shipmentStoreMapRequestRepository->first([
+                ['member_id', $memberId],
+                ['selection_token', $selectionToken],
+            ]);
+
+            if (! $shipmentStoreMapRequest instanceof ShipmentStoreMapRequest) {
+                return [
+                    'status' => 404,
+                    'message' => '找不到超商電子地圖選擇請求。',
+                ];
+            }
+
+            $hasSelectedStore = $this->hasSelectedStore($shipmentStoreMapRequest);
+
+            if (! $hasSelectedStore && $shipmentStoreMapRequest->expires_at !== null && $shipmentStoreMapRequest->expires_at->isPast()) {
+                return [
+                    'status' => 410,
+                    'message' => '超商電子地圖選擇請求已過期。',
+                ];
+            }
+
+            return [
+                'status' => 200,
+                'data' => [
+                    'selection_token' => $shipmentStoreMapRequest->selection_token,
+                    'store_type' => $shipmentStoreMapRequest->store_type->value,
+                    'selected' => $hasSelectedStore,
+                    'store' => $hasSelectedStore ? [
+                        'code' => $shipmentStoreMapRequest->selected_store_code,
+                        'name' => $shipmentStoreMapRequest->selected_store_name,
+                        'address' => $shipmentStoreMapRequest->selected_store_address,
+                    ] : null,
+                    'expires_at' => $shipmentStoreMapRequest->expires_at,
+                ],
+            ];
+        } catch (Throwable $e) {
+            $this->logger->error($e->getMessage(), [
+                'member_id' => $memberId,
+                'selection_token' => $selectionToken,
+                'exception' => $e,
+            ]);
+
+            return [
+                'status' => 500,
+                'message' => $e->getMessage(),
+            ];
+        }
+    }
+
+    /**
      * 產生 shipment_store_map_requests.selection_token
      */
     private function makeSelectionToken(): string
@@ -157,6 +215,13 @@ class ShipmentStoreMapRequestService
         $ttlMinutes = (int) $this->config->get('services.ecpay_logistics.store_map_request_ttl_minutes', 30);
 
         return max(1, $ttlMinutes);
+    }
+
+    private function hasSelectedStore(ShipmentStoreMapRequest $shipmentStoreMapRequest): bool
+    {
+        return $shipmentStoreMapRequest->selected_store_code !== null
+            && $shipmentStoreMapRequest->selected_store_name !== null
+            && $shipmentStoreMapRequest->selected_store_address !== null;
     }
 
     private function requiredConfigString(string $key): string

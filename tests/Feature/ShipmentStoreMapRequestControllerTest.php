@@ -38,6 +38,16 @@ class ShipmentStoreMapRequestControllerTest extends TestCase
     }
 
     /**
+     * 超商電子地圖選擇請求: 未驗證的訪客無法查詢選店結果。
+     */
+    public function test_guest_cannot_show_shipment_store_map_request(): void
+    {
+        $response = $this->getJson('/api/shipment-store-map-requests/STORE_MAP_SELECTION_TOKEN_001');
+
+        $response->assertStatus(401);
+    }
+
+    /**
      * 超商電子地圖選擇請求: 建立選擇請求時必須提供超商類型。
      */
     public function test_store_returns_422_when_store_type_is_missing(): void
@@ -315,5 +325,194 @@ class ShipmentStoreMapRequestControllerTest extends TestCase
         $this->postJson('/api/shipment-store-map-requests', [
             'store_type' => StoreType::UNIMART->value,
         ])->assertStatus(429);
+    }
+
+    /**
+     * 超商電子地圖選擇請求: 查詢已完成選店的請求時應回傳超商資訊。
+     */
+    public function test_show_returns_selected_store_map_request(): void
+    {
+        Carbon::setTestNow(Carbon::parse('2026-09-11 12:00:00'));
+        $member = Member::factory()->create();
+        Sanctum::actingAs($member);
+        $this->createShipmentStoreMapRequest([
+            'member_id' => $member->id,
+            'store_type' => StoreType::UNIMART->value,
+            'selection_token' => 'STORE_MAP_SELECTION_TOKEN_101',
+            'selected_store_code' => '991182',
+            'selected_store_name' => '測試門市',
+            'selected_store_address' => '台北市中正區測試路1號',
+            'expires_at' => Carbon::parse('2026-09-11 12:30:00'),
+        ]);
+
+        $response = $this->getJson('/api/shipment-store-map-requests/STORE_MAP_SELECTION_TOKEN_101');
+
+        $response->assertOk()
+            ->assertJsonPath('data.selection_token', 'STORE_MAP_SELECTION_TOKEN_101')
+            ->assertJsonPath('data.store_type', StoreType::UNIMART->value)
+            ->assertJsonPath('data.selected', true)
+            ->assertJsonPath('data.store.code', '991182')
+            ->assertJsonPath('data.store.name', '測試門市')
+            ->assertJsonPath('data.store.address', '台北市中正區測試路1號')
+            ->assertJsonPath('data.expires_at', '2026-09-11T04:30:00.000000Z');
+    }
+
+    /**
+     * 超商電子地圖選擇請求: 查詢尚未完成選店的請求時應回傳未選擇狀態。
+     */
+    public function test_show_returns_unselected_store_map_request(): void
+    {
+        Carbon::setTestNow(Carbon::parse('2026-09-11 12:00:00'));
+        $member = Member::factory()->create();
+        Sanctum::actingAs($member);
+        $this->createShipmentStoreMapRequest([
+            'member_id' => $member->id,
+            'store_type' => StoreType::FAMI->value,
+            'selection_token' => 'STORE_MAP_SELECTION_TOKEN_102',
+            'expires_at' => Carbon::parse('2026-09-11 12:30:00'),
+        ]);
+
+        $response = $this->getJson('/api/shipment-store-map-requests/STORE_MAP_SELECTION_TOKEN_102');
+
+        $response->assertOk()
+            ->assertJsonPath('data.selection_token', 'STORE_MAP_SELECTION_TOKEN_102')
+            ->assertJsonPath('data.store_type', StoreType::FAMI->value)
+            ->assertJsonPath('data.selected', false)
+            ->assertJsonPath('data.store', null);
+    }
+
+    /**
+     * 超商電子地圖選擇請求: 會員不能查詢其他會員的選店結果。
+     */
+    public function test_show_returns_404_for_another_members_store_map_request(): void
+    {
+        $member = Member::factory()->create();
+        $anotherMember = Member::factory()->create();
+        Sanctum::actingAs($member);
+        $this->createShipmentStoreMapRequest([
+            'member_id' => $anotherMember->id,
+            'selection_token' => 'STORE_MAP_SELECTION_TOKEN_103',
+            'selected_store_code' => '991182',
+            'selected_store_name' => '測試門市',
+            'selected_store_address' => '台北市中正區測試路1號',
+        ]);
+
+        $response = $this->getJson('/api/shipment-store-map-requests/STORE_MAP_SELECTION_TOKEN_103');
+
+        $response->assertStatus(404)
+            ->assertJsonPath('message', '找不到超商電子地圖選擇請求。');
+    }
+
+    /**
+     * 超商電子地圖選擇請求: 查詢不存在的選店請求時應回傳 404。
+     */
+    public function test_show_returns_404_when_store_map_request_does_not_exist(): void
+    {
+        $member = Member::factory()->create();
+        Sanctum::actingAs($member);
+
+        $response = $this->getJson('/api/shipment-store-map-requests/STORE_MAP_SELECTION_UNKNOWN');
+
+        $response->assertStatus(404)
+            ->assertJsonPath('message', '找不到超商電子地圖選擇請求。');
+    }
+
+    /**
+     * 超商電子地圖選擇請求: 未完成選店且已過期時應回傳 410。
+     */
+    public function test_show_returns_410_when_unselected_store_map_request_expired(): void
+    {
+        Carbon::setTestNow(Carbon::parse('2026-09-11 12:00:00'));
+        $member = Member::factory()->create();
+        Sanctum::actingAs($member);
+        $this->createShipmentStoreMapRequest([
+            'member_id' => $member->id,
+            'selection_token' => 'STORE_MAP_SELECTION_TOKEN_104',
+            'expires_at' => Carbon::parse('2026-09-11 11:59:59'),
+        ]);
+
+        $response = $this->getJson('/api/shipment-store-map-requests/STORE_MAP_SELECTION_TOKEN_104');
+
+        $response->assertStatus(410)
+            ->assertJsonPath('message', '超商電子地圖選擇請求已過期。');
+    }
+
+    /**
+     * 超商電子地圖選擇請求: 已完成選店的請求即使超過過期時間仍可查詢門市資訊。
+     */
+    public function test_show_returns_selected_store_map_request_after_expiration_time(): void
+    {
+        Carbon::setTestNow(Carbon::parse('2026-09-11 12:00:00'));
+        $member = Member::factory()->create();
+        Sanctum::actingAs($member);
+        $this->createShipmentStoreMapRequest([
+            'member_id' => $member->id,
+            'selection_token' => 'STORE_MAP_SELECTION_TOKEN_105',
+            'selected_store_code' => '991182',
+            'selected_store_name' => '測試門市',
+            'selected_store_address' => '台北市中正區測試路1號',
+            'expires_at' => Carbon::parse('2026-09-11 11:59:59'),
+        ]);
+
+        $response = $this->getJson('/api/shipment-store-map-requests/STORE_MAP_SELECTION_TOKEN_105');
+
+        $response->assertOk()
+            ->assertJsonPath('data.selected', true)
+            ->assertJsonPath('data.store.code', '991182')
+            ->assertJsonPath('data.store.name', '測試門市')
+            ->assertJsonPath('data.store.address', '台北市中正區測試路1號');
+    }
+
+    /**
+     * 超商電子地圖選擇請求: 查詢選店結果時會套用讀取 RateLimiter。
+     */
+    public function test_show_is_rate_limited_for_authenticated_member(): void
+    {
+        $member = Member::factory()->create();
+        Sanctum::actingAs($member);
+
+        $shipmentStoreMapRequestService = Mockery::mock(ShipmentStoreMapRequestService::class);
+        $shipmentStoreMapRequestService->shouldReceive('getSelectionResult')
+            ->times(60)
+            ->with($member->id, 'STORE_MAP_SELECTION_TOKEN_106')
+            ->andReturn([
+                'status' => 200,
+                'data' => [
+                    'selection_token' => 'STORE_MAP_SELECTION_TOKEN_106',
+                    'store_type' => StoreType::UNIMART->value,
+                    'selected' => false,
+                    'store' => null,
+                    'expires_at' => '2026-09-11T04:30:00.000000Z',
+                ],
+            ]);
+
+        $this->app->instance(ShipmentStoreMapRequestService::class, $shipmentStoreMapRequestService);
+
+        for ($attempt = 0; $attempt < 60; $attempt++) {
+            $this->getJson('/api/shipment-store-map-requests/STORE_MAP_SELECTION_TOKEN_106')->assertOk();
+        }
+
+        $this->getJson('/api/shipment-store-map-requests/STORE_MAP_SELECTION_TOKEN_106')->assertStatus(429);
+    }
+
+    /**
+     * @param  array<string, mixed>  $attributes
+     */
+    private function createShipmentStoreMapRequest(array $attributes = []): ShipmentStoreMapRequest
+    {
+        return ShipmentStoreMapRequest::query()->create(array_merge([
+            'member_id' => Member::factory()->create()->id,
+            'provider' => Provider::ECPAY_LOGISTICS->value,
+            'store_type' => StoreType::UNIMART->value,
+            'merchant_trade_no' => 'SMR20260911REAL00',
+            'selection_token' => 'STORE_MAP_SELECTION_TOKEN_100',
+            'request_payload' => null,
+            'checkout_payload' => null,
+            'response_payload' => null,
+            'selected_store_code' => null,
+            'selected_store_name' => null,
+            'selected_store_address' => null,
+            'expires_at' => now()->addMinutes(30),
+        ], $attributes));
     }
 }

@@ -54,4 +54,26 @@ class ShipmentStoreMapRequestController extends Controller
 
         return response()->json($response, $result['status']);
     }
+
+    /**
+     * 查詢超商電子地圖選擇結果。
+     */
+    public function show(Request $request, string $selectionToken): JsonResponse
+    {
+        $result = $this->shipmentStoreMapRequestService->getSelectionResult(
+            $request->user()->id,
+            $selectionToken,
+        );
+        $response = [];
+
+        if (array_key_exists('message', $result)) {
+            $response['message'] = $result['message'];
+        }
+
+        if (array_key_exists('data', $result)) {
+            $response['data'] = $result['data'];
+        }
+
+        return response()->json($response, $result['status']);
+    }
 }

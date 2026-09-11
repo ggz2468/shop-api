@@ -67,8 +67,10 @@ Route::middleware(['auth:sanctum', 'throttle:orders'])->prefix('orders')->group(
     Route::get('/{order}/payment-checkout', [OrderPaymentCheckoutController::class, 'show']);
 });
 
-Route::middleware(['auth:sanctum', 'throttle:shipment-store-map-requests'])
-    ->post('/shipment-store-map-requests', [ShipmentStoreMapRequestController::class, 'store']);
+Route::middleware(['auth:sanctum', 'throttle:shipment-store-map-requests'])->prefix('shipment-store-map-requests')->group(function () {
+    Route::post('/', [ShipmentStoreMapRequestController::class, 'store']);
+    Route::get('/{selectionToken}', [ShipmentStoreMapRequestController::class, 'show']);
+});
 
 Route::post('/payment-callbacks/ecpay', EcpayPaymentCallbackController::class)
     ->middleware('throttle:payment-callbacks');

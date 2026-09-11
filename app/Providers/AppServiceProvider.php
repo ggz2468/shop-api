@@ -160,10 +160,18 @@ class AppServiceProvider extends ServiceProvider
 
         RateLimiter::for('shipment-store-map-requests', function (Request $request): array {
             $memberKey = (string) ($request->user()?->id ?? $request->ip());
+            $isReadRequest = in_array($request->method(), ['GET', 'HEAD'], true);
+
+            if ($isReadRequest) {
+                return [
+                    Limit::perMinute(60)->by('shipment-store-map-requests:read:minute:'.$memberKey),
+                    Limit::perHour(500)->by('shipment-store-map-requests:read:hour:'.$request->ip()),
+                ];
+            }
 
             return [
-                Limit::perMinute(10)->by('shipment-store-map-requests:minute:'.$memberKey),
-                Limit::perHour(50)->by('shipment-store-map-requests:hour:'.$request->ip()),
+                Limit::perMinute(10)->by('shipment-store-map-requests:write:minute:'.$memberKey),
+                Limit::perHour(50)->by('shipment-store-map-requests:write:hour:'.$request->ip()),
             ];
         });
 
