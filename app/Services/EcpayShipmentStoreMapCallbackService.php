@@ -42,17 +42,12 @@ class EcpayShipmentStoreMapCallbackService
                 'CVSStoreName',
                 'CVSAddress',
                 'ExtraData',
-                'CheckMacValue',
             ];
 
             foreach ($requiredFields as $field) {
                 if (! array_key_exists($field, $payload) || $payload[$field] === '') {
                     throw new RuntimeException("0|Missing required field: $field", 400);
                 }
-            }
-
-            if (! $this->isValidCheckMacValue($payload)) {
-                throw new RuntimeException('0|Invalid CheckMacValue', 400);
             }
 
             $merchantId = $this->requiredConfigString('services.ecpay_logistics.merchant_id');
@@ -120,48 +115,6 @@ class EcpayShipmentStoreMapCallbackService
 
     /**
      * @param  array<string, mixed>  $payload
-     */
-    private function isValidCheckMacValue(array $payload): bool
-    {
-        $receivedCheckMacValue = $payload['CheckMacValue'] ?? null;
-
-        if (
-            ! is_string($receivedCheckMacValue)
-            || preg_match('/^[A-F0-9]{32}$/', $receivedCheckMacValue) !== 1
-        ) {
-            return false;
-        }
-
-        $expectedCheckMacValue = $this->makeCheckMacValue($payload);
-
-        return hash_equals($expectedCheckMacValue, $receivedCheckMacValue);
-    }
-
-    /**
-     * @param  array<string, mixed>  $payload
-     */
-    private function makeCheckMacValue(array $payload): string
-    {
-        unset($payload['CheckMacValue']);
-
-        uksort($payload, 'strcasecmp');
-
-        $encoded = 'HashKey='.$this->requiredConfigString('services.ecpay_logistics.hash_key')
-            .'&'.urldecode(http_build_query($payload))
-            .'&HashIV='.$this->requiredConfigString('services.ecpay_logistics.hash_iv');
-
-        $encoded = strtolower(urlencode($encoded));
-        $encoded = str_replace(
-            ['%2d', '%5f', '%2e', '%21', '%2a', '%28', '%29'],
-            ['-', '_', '.', '!', '*', '(', ')'],
-            $encoded,
-        );
-
-        return strtoupper(md5($encoded));
-    }
-
-    /**
-     * @param  array<string, mixed>  $payload
      * @return array<string, mixed>
      */
     private function normalizePayload(array $payload): array
@@ -182,7 +135,6 @@ class EcpayShipmentStoreMapCallbackService
             StoreType::UNIMART => 'UNIMARTC2C',
             StoreType::FAMI => 'FAMIC2C',
             StoreType::HILIFE => 'HILIFEC2C',
-            StoreType::OKMART => 'OKMARTC2C',
         };
     }
 

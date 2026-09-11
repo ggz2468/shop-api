@@ -36,7 +36,7 @@ class EcpayShipmentStoreMapCallbackControllerTest extends TestCase
             'selection_token' => 'STORE_MAP_SELECTION_TOKEN_001',
             'expires_at' => Carbon::parse('2026-09-11 12:30:00'),
         ]);
-        $payload = $this->signedStoreMapCallbackPayload([
+        $payload = $this->validStoreMapCallbackPayload([
             'MerchantTradeNo' => ' SMR20260911REAL01 ',
             'CVSStoreID' => ' 991182 ',
             'CVSStoreName' => ' 測試門市 ',
@@ -55,35 +55,7 @@ class EcpayShipmentStoreMapCallbackControllerTest extends TestCase
         $this->assertSame('SMR20260911REAL01', $shipmentStoreMapRequest->response_payload['MerchantTradeNo']);
         $this->assertSame('991182', $shipmentStoreMapRequest->response_payload['CVSStoreID']);
         $this->assertSame('STORE_MAP_SELECTION_TOKEN_001', $shipmentStoreMapRequest->response_payload['ExtraData']);
-    }
-
-    /**
-     * 綠界電子地圖回呼：驗簽失敗時不應更新選店資料。
-     */
-    public function test_callback_rejects_invalid_check_mac_value_without_updating_store_selection(): void
-    {
-        Carbon::setTestNow(Carbon::parse('2026-09-11 12:00:00'));
-        $this->setEcpayLogisticsConfig();
-        $shipmentStoreMapRequest = $this->createShipmentStoreMapRequest([
-            'merchant_trade_no' => 'SMR20260911REAL02',
-            'selection_token' => 'STORE_MAP_SELECTION_TOKEN_002',
-            'expires_at' => Carbon::parse('2026-09-11 12:30:00'),
-        ]);
-        $payload = $this->signedStoreMapCallbackPayload([
-            'MerchantTradeNo' => 'SMR20260911REAL02',
-            'ExtraData' => 'STORE_MAP_SELECTION_TOKEN_002',
-            'CheckMacValue' => str_repeat('A', 32),
-        ]);
-
-        $response = $this->post('/api/shipment-store-map-callbacks/ecpay', $payload);
-
-        $response->assertStatus(400)
-            ->assertHeader('Content-Type', 'text/plain; charset=UTF-8')
-            ->assertSeeText('0|Invalid CheckMacValue');
-
-        $shipmentStoreMapRequest->refresh();
-        $this->assertNull($shipmentStoreMapRequest->selected_store_code);
-        $this->assertNull($shipmentStoreMapRequest->response_payload);
+        $this->assertArrayNotHasKey('CheckMacValue', $shipmentStoreMapRequest->response_payload);
     }
 
     /**
@@ -92,7 +64,7 @@ class EcpayShipmentStoreMapCallbackControllerTest extends TestCase
     public function test_callback_rejects_missing_required_field(): void
     {
         $this->setEcpayLogisticsConfig();
-        $payload = $this->signedStoreMapCallbackPayload([
+        $payload = $this->validStoreMapCallbackPayload([
             'CVSStoreID' => '',
         ]);
 
@@ -108,7 +80,7 @@ class EcpayShipmentStoreMapCallbackControllerTest extends TestCase
     public function test_callback_rejects_invalid_merchant_id(): void
     {
         $this->setEcpayLogisticsConfig();
-        $payload = $this->signedStoreMapCallbackPayload([
+        $payload = $this->validStoreMapCallbackPayload([
             'MerchantID' => '9999999',
         ]);
 
@@ -124,7 +96,7 @@ class EcpayShipmentStoreMapCallbackControllerTest extends TestCase
     public function test_callback_rejects_unknown_store_map_request(): void
     {
         $this->setEcpayLogisticsConfig();
-        $payload = $this->signedStoreMapCallbackPayload([
+        $payload = $this->validStoreMapCallbackPayload([
             'MerchantTradeNo' => 'SMR20260911UNKNOWN',
             'ExtraData' => 'STORE_MAP_SELECTION_UNKNOWN',
         ]);
@@ -147,7 +119,7 @@ class EcpayShipmentStoreMapCallbackControllerTest extends TestCase
             'selection_token' => 'STORE_MAP_SELECTION_TOKEN_005',
             'expires_at' => Carbon::parse('2026-09-11 12:30:00'),
         ]);
-        $payload = $this->signedStoreMapCallbackPayload([
+        $payload = $this->validStoreMapCallbackPayload([
             'MerchantTradeNo' => 'SMR20260911REAL05',
             'ExtraData' => 'STORE_MAP_SELECTION_TOKEN_OTHER',
         ]);
@@ -174,7 +146,7 @@ class EcpayShipmentStoreMapCallbackControllerTest extends TestCase
             'selection_token' => 'STORE_MAP_SELECTION_TOKEN_003',
             'expires_at' => Carbon::parse('2026-09-11 11:59:59'),
         ]);
-        $payload = $this->signedStoreMapCallbackPayload([
+        $payload = $this->validStoreMapCallbackPayload([
             'MerchantTradeNo' => 'SMR20260911REAL03',
             'ExtraData' => 'STORE_MAP_SELECTION_TOKEN_003',
         ]);
@@ -202,7 +174,7 @@ class EcpayShipmentStoreMapCallbackControllerTest extends TestCase
             'store_type' => StoreType::FAMI->value,
             'expires_at' => Carbon::parse('2026-09-11 12:30:00'),
         ]);
-        $payload = $this->signedStoreMapCallbackPayload([
+        $payload = $this->validStoreMapCallbackPayload([
             'MerchantTradeNo' => 'SMR20260911REAL06',
             'ExtraData' => 'STORE_MAP_SELECTION_TOKEN_006',
             'LogisticsSubType' => 'UNIMARTC2C',
@@ -230,7 +202,7 @@ class EcpayShipmentStoreMapCallbackControllerTest extends TestCase
             'selection_token' => 'STORE_MAP_SELECTION_TOKEN_007',
             'expires_at' => null,
         ]);
-        $payload = $this->signedStoreMapCallbackPayload([
+        $payload = $this->validStoreMapCallbackPayload([
             'MerchantTradeNo' => 'SMR20260911REAL07',
             'ExtraData' => 'STORE_MAP_SELECTION_TOKEN_007',
         ]);
@@ -257,7 +229,7 @@ class EcpayShipmentStoreMapCallbackControllerTest extends TestCase
             'selection_token' => 'STORE_MAP_SELECTION_TOKEN_008',
             'expires_at' => Carbon::parse('2026-09-11 12:00:00'),
         ]);
-        $payload = $this->signedStoreMapCallbackPayload([
+        $payload = $this->validStoreMapCallbackPayload([
             'MerchantTradeNo' => 'SMR20260911REAL08',
             'ExtraData' => 'STORE_MAP_SELECTION_TOKEN_008',
         ]);
@@ -285,7 +257,7 @@ class EcpayShipmentStoreMapCallbackControllerTest extends TestCase
             'selection_token' => 'STORE_MAP_SELECTION_TOKEN_004',
             'expires_at' => Carbon::parse('2026-09-11 12:30:00'),
         ]);
-        $payload = $this->signedStoreMapCallbackPayload([
+        $payload = $this->validStoreMapCallbackPayload([
             'MerchantTradeNo' => 'SMR20260911REAL04',
             'ExtraData' => 'STORE_MAP_SELECTION_TOKEN_004',
         ]);
@@ -294,35 +266,6 @@ class EcpayShipmentStoreMapCallbackControllerTest extends TestCase
 
         $response->assertStatus(500)
             ->assertSeeText('0|Internal Server Error');
-    }
-
-    /**
-     * 綠界電子地圖回呼：缺少物流 HashKey 設定時應回覆伺服器錯誤且不更新選店資料。
-     */
-    public function test_callback_returns_server_error_when_hash_key_is_not_configured_without_updating_store_selection(): void
-    {
-        Carbon::setTestNow(Carbon::parse('2026-09-11 12:00:00'));
-        $this->setEcpayLogisticsConfig();
-        config()->set('services.ecpay_logistics.hash_key', null);
-        $shipmentStoreMapRequest = $this->createShipmentStoreMapRequest([
-            'merchant_trade_no' => 'SMR20260911REAL09',
-            'selection_token' => 'STORE_MAP_SELECTION_TOKEN_009',
-            'expires_at' => Carbon::parse('2026-09-11 12:30:00'),
-        ]);
-        $payload = $this->validStoreMapCallbackPayload([
-            'MerchantTradeNo' => 'SMR20260911REAL09',
-            'ExtraData' => 'STORE_MAP_SELECTION_TOKEN_009',
-            'CheckMacValue' => str_repeat('B', 32),
-        ]);
-
-        $response = $this->post('/api/shipment-store-map-callbacks/ecpay', $payload);
-
-        $response->assertStatus(500)
-            ->assertSeeText('0|Internal Server Error');
-
-        $shipmentStoreMapRequest->refresh();
-        $this->assertNull($shipmentStoreMapRequest->selected_store_code);
-        $this->assertNull($shipmentStoreMapRequest->response_payload);
     }
 
     /**
@@ -453,69 +396,12 @@ class EcpayShipmentStoreMapCallbackControllerTest extends TestCase
             'CVSTelephone' => '0212345678',
             'CVSOutSide' => '0',
             'ExtraData' => 'STORE_MAP_SELECTION_TOKEN_000',
-            'CheckMacValue' => 'VALID_CHECK_MAC_VALUE',
         ], $overrides);
-    }
-
-    /**
-     * @param  array<string, string>  $overrides
-     * @return array<string, string>
-     */
-    private function signedStoreMapCallbackPayload(array $overrides = []): array
-    {
-        $payload = array_merge([
-            'MerchantID' => '2000132',
-            'MerchantTradeNo' => 'SMR20260911REAL00',
-            'LogisticsSubType' => 'UNIMARTC2C',
-            'CVSStoreID' => '991182',
-            'CVSStoreName' => '測試門市',
-            'CVSAddress' => '台北市中正區測試路1號',
-            'CVSTelephone' => '0212345678',
-            'CVSOutSide' => '0',
-            'ExtraData' => 'STORE_MAP_SELECTION_TOKEN_000',
-        ], $overrides);
-
-        $payloadForSignature = array_map(
-            fn (string $value): string => trim($value),
-            $payload,
-        );
-        $payload['CheckMacValue'] = $this->makeLogisticsCheckMacValue($payloadForSignature);
-
-        if (array_key_exists('CheckMacValue', $overrides)) {
-            $payload['CheckMacValue'] = $overrides['CheckMacValue'];
-        }
-
-        return $payload;
-    }
-
-    /**
-     * @param  array<string, string>  $payload
-     */
-    private function makeLogisticsCheckMacValue(array $payload): string
-    {
-        unset($payload['CheckMacValue']);
-
-        uksort($payload, 'strcasecmp');
-
-        $encoded = 'HashKey='.config('services.ecpay_logistics.hash_key')
-            .'&'.urldecode(http_build_query($payload))
-            .'&HashIV='.config('services.ecpay_logistics.hash_iv');
-
-        $encoded = strtolower(urlencode($encoded));
-        $encoded = str_replace(
-            ['%2d', '%5f', '%2e', '%21', '%2a', '%28', '%29'],
-            ['-', '_', '.', '!', '*', '(', ')'],
-            $encoded,
-        );
-
-        return strtoupper(md5($encoded));
     }
 
     private function setEcpayLogisticsConfig(): void
     {
         config()->set('services.ecpay_logistics.merchant_id', '2000132');
-        config()->set('services.ecpay_logistics.hash_key', 'XBERn1YOvpM9nfZc');
-        config()->set('services.ecpay_logistics.hash_iv', 'h1ONHk4P4yqbl5LK');
         config()->set('services.ecpay_logistics.store_map_client_redirect_url', 'http://localhost/checkout');
     }
 }

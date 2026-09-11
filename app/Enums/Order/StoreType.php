@@ -18,9 +18,4 @@ enum StoreType: string
      * 萊爾富
      */
     case HILIFE = 'HILIFE';
-
-    /**
-     * OK 超商
-     */
-    case OKMART = 'OKMART';
 }

@@ -206,7 +206,6 @@ class ShipmentStoreMapRequestService
             StoreType::UNIMART->value => 'UNIMARTC2C',
             StoreType::FAMI->value => 'FAMIC2C',
             StoreType::HILIFE->value => 'HILIFEC2C',
-            StoreType::OKMART->value => 'OKMARTC2C',
         };
     }
 

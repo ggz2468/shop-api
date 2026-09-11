@@ -274,7 +274,7 @@ class ShipmentStoreMapRequestControllerTest extends TestCase
         $shipmentStoreMapRequestService = Mockery::mock(ShipmentStoreMapRequestService::class);
         $shipmentStoreMapRequestService->shouldReceive('create')
             ->once()
-            ->with($member->id, StoreType::OKMART->value, null)
+            ->with($member->id, StoreType::HILIFE->value, null)
             ->andReturn([
                 'status' => 409,
                 'message' => '目前無法建立超商電子地圖選擇請求。',
@@ -283,7 +283,7 @@ class ShipmentStoreMapRequestControllerTest extends TestCase
         $this->app->instance(ShipmentStoreMapRequestService::class, $shipmentStoreMapRequestService);
 
         $response = $this->postJson('/api/shipment-store-map-requests', [
-            'store_type' => StoreType::OKMART->value,
+            'store_type' => StoreType::HILIFE->value,
         ]);
 
         $response->assertStatus(409)

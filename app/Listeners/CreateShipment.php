@@ -123,7 +123,6 @@ class CreateShipment implements ShouldQueue
             OrderStoreType::UNIMART => StoreType::UNIMART,
             OrderStoreType::FAMI => StoreType::FAMI,
             OrderStoreType::HILIFE => StoreType::HILIFE,
-            OrderStoreType::OKMART => StoreType::OKMART,
         };
     }
 }
