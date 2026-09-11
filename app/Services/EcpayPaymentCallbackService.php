@@ -191,17 +191,17 @@ class EcpayPaymentCallbackService
                     'status' => $code,
                     'content' => $e->getMessage(),
                 ];
-            } else {
-                $this->logger->error('Ecpay payment callback error: '.$e->getMessage(), [
-                    'payload' => $payload,
-                    'exception' => $e,
-                ]);
-
-                return [
-                    'status' => 500,
-                    'content' => '0|Internal Server Error',
-                ];
             }
+
+            $this->logger->error('Ecpay payment callback error: '.$e->getMessage(), [
+                'payload' => $payload,
+                'exception' => $e,
+            ]);
+
+            return [
+                'status' => 500,
+                'content' => '0|Internal Server Error',
+            ];
         }
     }
 
