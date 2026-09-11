@@ -176,5 +176,15 @@ class AppServiceProvider extends ServiceProvider
                 Limit::perMinute(300)->by('payment-callbacks:ip:'.$request->ip()),
             ];
         });
+
+        RateLimiter::for('shipment-store-map-callbacks', function (Request $request): array {
+            $selectionToken = trim((string) $request->input('ExtraData'));
+            $callbackKey = $selectionToken !== '' ? $selectionToken : $request->ip();
+
+            return [
+                Limit::perMinute(30)->by('shipment-store-map-callbacks:callback:'.$callbackKey),
+                Limit::perMinute(300)->by('shipment-store-map-callbacks:ip:'.$request->ip()),
+            ];
+        });
     }
 }
