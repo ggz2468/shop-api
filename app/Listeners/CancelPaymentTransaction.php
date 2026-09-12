@@ -5,9 +5,8 @@ namespace App\Listeners;
 use App\Enums\PaymentTransaction\Status;
 use App\Events\OrderCanceled;
 use App\Repositories\PaymentTransactionRepository;
-use Illuminate\Contracts\Queue\ShouldQueue;
 
-class CancelPaymentTransaction implements ShouldQueue
+class CancelPaymentTransaction
 {
     /**
      * @return void

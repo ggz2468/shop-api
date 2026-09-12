@@ -6,10 +6,9 @@ use App\Enums\Shipment\Status as ShipmentStatus;
 use App\Events\ShipmentFailed;
 use App\Models\Shipment;
 use App\Repositories\ShipmentRepository;
-use Illuminate\Contracts\Queue\ShouldQueue;
 use Illuminate\Database\Eloquent\ModelNotFoundException;
 
-class MarkShipmentAsFailed implements ShouldQueue
+class MarkShipmentAsFailed
 {
     /**
      * @return void

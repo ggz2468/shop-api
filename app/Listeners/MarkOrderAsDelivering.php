@@ -8,10 +8,9 @@ use App\Events\ShipmentShipped;
 use App\Models\Shipment;
 use App\Repositories\OrderRepository;
 use App\Repositories\ShipmentRepository;
-use Illuminate\Contracts\Queue\ShouldQueue;
 use Illuminate\Database\Eloquent\ModelNotFoundException;
 
-class MarkOrderAsDelivering implements ShouldQueue
+class MarkOrderAsDelivering
 {
     /**
      * @return void

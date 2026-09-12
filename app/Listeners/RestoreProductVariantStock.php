@@ -6,11 +6,10 @@ use App\Enums\Order\Status as OrderStatus;
 use App\Events\OrderCanceled;
 use App\Models\Order;
 use App\Models\ProductVariant;
-use Illuminate\Contracts\Queue\ShouldQueue;
 use Illuminate\Database\ConnectionInterface;
 use Illuminate\Database\Eloquent\ModelNotFoundException;
 
-class RestoreProductVariantStock implements ShouldQueue
+class RestoreProductVariantStock
 {
     /**
      * @return void

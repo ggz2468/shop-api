@@ -5,9 +5,8 @@ namespace App\Listeners;
 use App\Enums\Shipment\Status as ShipmentStatus;
 use App\Events\OrderCanceled;
 use App\Repositories\ShipmentRepository;
-use Illuminate\Contracts\Queue\ShouldQueue;
 
-class CancelShipment implements ShouldQueue
+class CancelShipment
 {
     /**
      * @return void

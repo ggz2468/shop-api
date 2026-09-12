@@ -15,11 +15,10 @@ use App\Repositories\PaymentTransactionRepository;
 use App\Repositories\ShipmentRepository;
 use Illuminate\Contracts\Config\Repository as ConfigRepository;
 use Illuminate\Contracts\Events\Dispatcher;
-use Illuminate\Contracts\Queue\ShouldQueue;
 use Illuminate\Database\Eloquent\ModelNotFoundException;
 use RuntimeException;
 
-class CreateShipment implements ShouldQueue
+class CreateShipment
 {
     /**
      * @return void
