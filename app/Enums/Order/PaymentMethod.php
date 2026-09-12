@@ -23,4 +23,14 @@ enum PaymentMethod: int
      * 超商條碼
      */
     case BARCODE = 4;
+
+    public function label(): string
+    {
+        return match ($this) {
+            self::CREDIT_CARD => '信用卡',
+            self::ATM => 'ATM 轉帳',
+            self::CVS => '超商代碼',
+            self::BARCODE => '超商條碼',
+        };
+    }
 }

@@ -13,4 +13,12 @@ enum ShippingMethod: int
      * 超商取貨
      */
     case CONVENIENCE_STORE = 2;
+
+    public function label(): string
+    {
+        return match ($this) {
+            self::HOME_DELIVERY => '宅配',
+            self::CONVENIENCE_STORE => '超商取貨',
+        };
+    }
 }

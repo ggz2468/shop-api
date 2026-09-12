@@ -158,6 +158,15 @@ class AppServiceProvider extends ServiceProvider
             ];
         });
 
+        RateLimiter::for('order-options', function (Request $request): array {
+            $actorKey = (string) ($request->user()?->id ?? $request->ip());
+
+            return [
+                Limit::perMinute(120)->by('order-options:read:minute:'.$actorKey),
+                Limit::perHour(1000)->by('order-options:read:hour:'.$request->ip()),
+            ];
+        });
+
         RateLimiter::for('shipment-store-map-requests', function (Request $request): array {
             $memberKey = (string) ($request->user()?->id ?? $request->ip());
             $isReadRequest = in_array($request->method(), ['GET', 'HEAD'], true);

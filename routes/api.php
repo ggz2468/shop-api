@@ -5,6 +5,7 @@ use App\Http\Controllers\CartController;
 use App\Http\Controllers\EcpayPaymentCallbackController;
 use App\Http\Controllers\EcpayShipmentStoreMapCallbackController;
 use App\Http\Controllers\OrderController;
+use App\Http\Controllers\OrderOptionsController;
 use App\Http\Controllers\OrderPaymentCheckoutController;
 use App\Http\Controllers\PasswordResetController;
 use App\Http\Controllers\ProductController;
@@ -58,6 +59,9 @@ Route::middleware(['auth:sanctum', 'throttle:cart'])->prefix('cart')->group(func
     Route::delete('/items/{productVariant}', [CartController::class, 'destroyItem']);
     Route::delete('/items', [CartController::class, 'clear']);
 });
+
+Route::get('/orders/options', OrderOptionsController::class)
+    ->middleware('throttle:order-options');
 
 Route::middleware(['auth:sanctum', 'throttle:orders'])->prefix('orders')->group(function () {
     Route::get('/', [OrderController::class, 'index']);
