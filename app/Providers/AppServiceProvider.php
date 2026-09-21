@@ -3,7 +3,9 @@
 namespace App\Providers;
 
 use App\Contracts\PaymentGateway;
+use App\Contracts\ShipmentGateway;
 use App\Gateways\Payments\PaymentGatewayManager;
+use App\Gateways\Shipments\ShipmentGatewayManager;
 use Illuminate\Cache\RateLimiting\Limit;
 use Illuminate\Http\Request;
 use Illuminate\Support\Facades\RateLimiter;
@@ -19,6 +21,11 @@ class AppServiceProvider extends ServiceProvider
         $this->app->bind(PaymentGateway::class, function (): PaymentGateway {
             return $this->app->make(PaymentGatewayManager::class)
                 ->driver((int) config('services.payment.default_provider'));
+        });
+
+        $this->app->bind(ShipmentGateway::class, function (): ShipmentGateway {
+            return $this->app->make(ShipmentGatewayManager::class)
+                ->driver((int) config('services.shipment.default_provider'));
         });
     }
 

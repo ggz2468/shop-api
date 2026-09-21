@@ -5,7 +5,7 @@ namespace App\Events;
 use Illuminate\Foundation\Events\Dispatchable;
 use Illuminate\Queue\SerializesModels;
 
-class ShipmentCreated
+class ShipmentRequestPayloadBuilt
 {
     use Dispatchable, SerializesModels;
 
@@ -14,6 +14,5 @@ class ShipmentCreated
      */
     public function __construct(
         public int $shipmentId,
-        public ?array $providerPayload = null,
     ) {}
 }

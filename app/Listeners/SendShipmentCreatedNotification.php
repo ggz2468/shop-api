@@ -3,7 +3,7 @@
 namespace App\Listeners;
 
 use App\Enums\Shipment\Status as ShipmentStatus;
-use App\Events\ShipmentCreated;
+use App\Events\ShipmentMarkedAsCreated;
 use App\Models\Shipment;
 use App\Notifications\ShipmentCreatedNotification;
 use App\Repositories\ShipmentRepository;
@@ -19,7 +19,7 @@ class SendShipmentCreatedNotification implements ShouldQueue
         private ShipmentRepository $shipmentRepository,
     ) {}
 
-    public function handle(ShipmentCreated $event): void
+    public function handle(ShipmentMarkedAsCreated $event): void
     {
         $shipment = $this->shipmentRepository->first(['id', $event->shipmentId]);
 

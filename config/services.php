@@ -1,8 +1,9 @@
 <?php
 
-use App\Enums\PaymentTransaction\Provider;
+use App\Enums\PaymentTransaction\Provider as PaymentTransactionProvider;
 use App\Enums\Shipment\Provider as ShipmentProvider;
 use App\Gateways\Payments\EcpayPaymentGateway;
+use App\Gateways\Shipments\EcpayLogisticsGateway;
 
 return [
 
@@ -49,15 +50,18 @@ return [
 
     // 金流設定
     'payment' => [
-        'default_provider' => (int) env('PAYMENT_DEFAULT_PROVIDER', Provider::ECPAY->value),
+        'default_provider' => (int) env('PAYMENT_DEFAULT_PROVIDER', PaymentTransactionProvider::ECPAY->value),
         'gateways' => [
-            Provider::ECPAY->value => EcpayPaymentGateway::class,
+            PaymentTransactionProvider::ECPAY->value => EcpayPaymentGateway::class,
         ],
     ],
 
     // 物流設定
     'shipment' => [
         'default_provider' => (int) env('SHIPMENT_DEFAULT_PROVIDER', ShipmentProvider::ECPAY_LOGISTICS->value),
+        'gateways' => [
+            ShipmentProvider::ECPAY_LOGISTICS->value => EcpayLogisticsGateway::class,
+        ],
     ],
 
     // 綠界金流
@@ -78,7 +82,11 @@ return [
         'hash_key' => env('ECPAY_LOGISTICS_HASH_KEY'),
         'hash_iv' => env('ECPAY_LOGISTICS_HASH_IV'),
         'create_action_url' => env('ECPAY_LOGISTICS_CREATE_ACTION_URL'),
+        'create_server_reply_url' => env('ECPAY_LOGISTICS_CREATE_SERVER_REPLY_URL'),
         'query_action_url' => env('ECPAY_LOGISTICS_QUERY_ACTION_URL'),
+        'home_logistics_sub_type' => env('ECPAY_LOGISTICS_HOME_LOGISTICS_SUB_TYPE', 'TCAT'),
+        'sender_name' => env('ECPAY_LOGISTICS_SENDER_NAME'),
+        'sender_cell_phone' => env('ECPAY_LOGISTICS_SENDER_CELL_PHONE'),
         'store_map_action_url' => env('ECPAY_LOGISTICS_STORE_MAP_ACTION_URL'),
         'store_map_server_reply_url' => env('ECPAY_LOGISTICS_STORE_MAP_SERVER_REPLY_URL'),
         'store_map_client_redirect_url' => env('ECPAY_LOGISTICS_STORE_MAP_CLIENT_REDIRECT_URL'),
