@@ -201,6 +201,21 @@ class AppServiceProvider extends ServiceProvider
             ];
         });
 
+        RateLimiter::for('shipment-callbacks', function (Request $request): array {
+            $merchantTradeNo = trim((string) $request->input('MerchantTradeNo'));
+
+            if ($merchantTradeNo === '') {
+                return [
+                    Limit::perMinute(300)->by('shipment-callbacks:ip:'.$request->ip()),
+                ];
+            }
+
+            return [
+                Limit::perMinute(30)->by('shipment-callbacks:callback:'.$merchantTradeNo),
+                Limit::perMinute(300)->by('shipment-callbacks:ip:'.$request->ip()),
+            ];
+        });
+
         RateLimiter::for('shipment-store-map-callbacks', function (Request $request): array {
             $selectionToken = trim((string) $request->input('ExtraData'));
             $callbackKey = $selectionToken !== '' ? $selectionToken : $request->ip();

@@ -3,6 +3,7 @@
 use App\Http\Controllers\AuthController;
 use App\Http\Controllers\CartController;
 use App\Http\Controllers\EcpayPaymentCallbackController;
+use App\Http\Controllers\EcpayShipmentCallbackController;
 use App\Http\Controllers\EcpayShipmentStoreMapCallbackController;
 use App\Http\Controllers\OrderController;
 use App\Http\Controllers\OrderOptionsController;
@@ -78,6 +79,9 @@ Route::middleware(['auth:sanctum', 'throttle:shipment-store-map-requests'])->pre
 
 Route::post('/payment-callbacks/ecpay', EcpayPaymentCallbackController::class)
     ->middleware('throttle:payment-callbacks');
+
+Route::post('/shipment-callbacks/ecpay', EcpayShipmentCallbackController::class)
+    ->middleware('throttle:shipment-callbacks');
 
 Route::post('/shipment-store-map-callbacks/ecpay', EcpayShipmentStoreMapCallbackController::class)
     ->middleware('throttle:shipment-store-map-callbacks');
