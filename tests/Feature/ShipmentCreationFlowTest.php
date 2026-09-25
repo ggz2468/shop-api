@@ -29,7 +29,7 @@ class ShipmentCreationFlowTest extends TestCase
         Notification::fake();
         Http::fake([
             'https://logistics-stage.ecpay.com.tw/Express/Create' => Http::response(
-                'RtnCode=1&RtnMsg=OK&AllPayLogisticsID=123456789&BookingNote=ABC123',
+                '1|RtnCode=1&RtnMsg=OK&AllPayLogisticsID=123456789&BookingNote=ABC123',
                 200,
                 ['Content-Type' => 'text/plain'],
             ),

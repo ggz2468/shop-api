@@ -31,9 +31,9 @@ class BuildShipmentRequestPayloadTest extends TestCase
     }
 
     /**
-     * ShipmentRequested: listener 應進入 queue，避免第三方物流 payload 建立流程阻塞主流程。
+     * ShipmentRequested: listener 應同步建立 payload，讓後續送出物流請求流程可立即取得 checkout payload。
      */
-    public function test_listener_should_be_queued(): void
+    public function test_listener_should_not_be_queued(): void
     {
         $listener = new BuildShipmentRequestPayload(
             new ShipmentRepository,
@@ -42,7 +42,7 @@ class BuildShipmentRequestPayloadTest extends TestCase
             app(Dispatcher::class),
         );
 
-        $this->assertInstanceOf(ShouldQueue::class, $listener);
+        $this->assertNotInstanceOf(ShouldQueue::class, $listener);
     }
 
     /**

@@ -101,9 +101,9 @@ class EcpayShipmentCallbackControllerTest extends TestCase
     }
 
     /**
-     * 綠界物流回呼：物流失敗狀態應標記物流單失敗並保存原因。
+     * 綠界物流回呼：物流失敗狀態沒有貨態轉移時應確認但不更新物流單。
      */
-    public function test_callback_processes_failed_payload_and_marks_shipment_failed(): void
+    public function test_callback_acknowledges_failed_payload_without_updating_shipment_state(): void
     {
         $this->setEcpayLogisticsConfig();
         $shipment = $this->createEcpayShipment([
@@ -127,9 +127,8 @@ class EcpayShipmentCallbackControllerTest extends TestCase
             ->assertSeeText('1|OK');
 
         $shipment->refresh();
-        $this->assertSame(ShipmentStatus::FAILED->value, $shipment->status);
-        $this->assertSame('Shipment failed', $shipment->response_payload['reason']);
-        $this->assertSame('2001', $shipment->response_payload['LogisticsStatus']);
+        $this->assertSame(ShipmentStatus::CREATED->value, $shipment->status);
+        $this->assertNull($shipment->response_payload);
         $this->assertSame(OrderStatus::STOCKING->value, $shipment->order->refresh()->status);
     }
 
@@ -237,11 +236,31 @@ class EcpayShipmentCallbackControllerTest extends TestCase
     }
 
     /**
-     * 綠界物流回呼：找不到對應物流單時應拒絕 callback。
+     * 綠界物流回呼：找不到對應訂單時應拒絕 callback。
+     */
+    public function test_callback_rejects_unknown_order(): void
+    {
+        $this->setEcpayLogisticsConfig();
+        $payload = $this->signedCallbackPayload([
+            'MerchantTradeNo' => 'ORD20260922UNKNOWN',
+            'AllPayLogisticsID' => '999999999',
+        ]);
+
+        $response = $this->post('/api/shipment-callbacks/ecpay', $payload);
+
+        $response->assertStatus(404)
+            ->assertSeeText('0|Order not found');
+    }
+
+    /**
+     * 綠界物流回呼：找得到訂單但找不到對應物流單時應拒絕 callback。
      */
     public function test_callback_rejects_unknown_shipment(): void
     {
         $this->setEcpayLogisticsConfig();
+        Order::factory()->create([
+            'number' => 'ORD20260922UNKNOWN',
+        ]);
         $payload = $this->signedCallbackPayload([
             'MerchantTradeNo' => 'ORD20260922UNKNOWN',
             'AllPayLogisticsID' => '999999999',
@@ -254,9 +273,9 @@ class EcpayShipmentCallbackControllerTest extends TestCase
     }
 
     /**
-     * 綠界物流回呼：不支援的物流狀態應拒絕 callback 且不更新物流單。
+     * 綠界物流回呼：不支援的物流狀態應確認 callback 且不更新物流單。
      */
-    public function test_callback_rejects_unsupported_logistics_status_without_updating_shipment(): void
+    public function test_callback_acknowledges_unsupported_logistics_status_without_updating_shipment(): void
     {
         $this->setEcpayLogisticsConfig();
         $shipment = $this->createEcpayShipment([
@@ -275,8 +294,8 @@ class EcpayShipmentCallbackControllerTest extends TestCase
 
         $response = $this->post('/api/shipment-callbacks/ecpay', $payload);
 
-        $response->assertStatus(400)
-            ->assertSeeText('0|Unsupported LogisticsStatus');
+        $response->assertOk()
+            ->assertSeeText('1|OK');
 
         $shipment->refresh();
         $this->assertSame(ShipmentStatus::CREATED->value, $shipment->status);

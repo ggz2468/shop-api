@@ -12,6 +12,7 @@ use App\Models\Order;
 use App\Models\PaymentTransaction;
 use App\Services\EcpayPaymentCallbackService;
 use Illuminate\Foundation\Testing\RefreshDatabase;
+use Illuminate\Support\Facades\Http;
 use Illuminate\Support\Facades\Notification;
 use Mockery;
 use Tests\TestCase;
@@ -26,6 +27,7 @@ class EcpayPaymentCallbackControllerTest extends TestCase
     public function test_callback_processes_real_success_payload_and_updates_payment_state(): void
     {
         Notification::fake();
+        $this->fakeSuccessfulShipmentRequest();
         $this->setEcpayConfig();
         $paymentTransaction = $this->createEcpayPaymentTransaction([
             'merchant_trade_no' => 'PAY20260906REAL01',
@@ -56,6 +58,7 @@ class EcpayPaymentCallbackControllerTest extends TestCase
     public function test_callback_processes_real_success_payload_for_non_credit_card_ecpay_payment(): void
     {
         Notification::fake();
+        $this->fakeSuccessfulShipmentRequest();
         $this->setEcpayConfig();
         $paymentTransaction = $this->createEcpayPaymentTransaction([
             'merchant_trade_no' => 'PAY20260906REAL05',
@@ -286,6 +289,7 @@ class EcpayPaymentCallbackControllerTest extends TestCase
     public function test_callback_processes_success_payload_after_non_instant_payment_was_authorized(): void
     {
         Notification::fake();
+        $this->fakeSuccessfulShipmentRequest();
         $this->setEcpayConfig();
         $paymentTransaction = $this->createEcpayPaymentTransaction([
             'merchant_trade_no' => 'PAY20260906REAL07',
@@ -747,5 +751,16 @@ class EcpayPaymentCallbackControllerTest extends TestCase
         config()->set('services.ecpay.merchant_id', '3002599');
         config()->set('services.ecpay.hash_key', 'spPjZn66i0OhqJsQ');
         config()->set('services.ecpay.hash_iv', 'hT5OJckN45isQTTs');
+    }
+
+    private function fakeSuccessfulShipmentRequest(): void
+    {
+        Http::fake([
+            'https://logistics-stage.ecpay.com.tw/Express/Create' => Http::response(
+                '1|RtnCode=1&RtnMsg=OK&AllPayLogisticsID=123456789&BookingNote=ABC123',
+                200,
+                ['Content-Type' => 'text/plain'],
+            ),
+        ]);
     }
 }

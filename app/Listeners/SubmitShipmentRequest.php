@@ -62,7 +62,7 @@ class SubmitShipmentRequest implements ShouldQueue
             return;
         }
 
-        parse_str($response->body(), $providerPayload);
+        $providerPayload = $this->parseEcpayResponse($response->body());
         $rtnCode = $providerPayload['RtnCode'] ?? null;
 
         if ($rtnCode === null) {
@@ -77,16 +77,6 @@ class SubmitShipmentRequest implements ShouldQueue
                 'provider_payload' => $providerPayload,
             ]);
             $this->events->dispatch(new ShipmentFailed($shipment->id, 'Invalid shipment provider response.', $providerPayload));
-
-            return;
-        }
-
-        if ($rtnCode !== '1') {
-            $this->logger->warning('Shipment request is rejected by provider.', [
-                'shipment_id' => $shipment->id,
-                'provider_payload' => $providerPayload,
-            ]);
-            $this->events->dispatch(new ShipmentFailed($shipment->id, $providerPayload['RtnMsg'] ?? '', $providerPayload));
 
             return;
         }
@@ -107,5 +97,31 @@ class SubmitShipmentRequest implements ShouldQueue
     private function isShipmentCheckoutPayloadReady(Shipment $shipment): bool
     {
         return ! empty($shipment->checkout_payload);
+    }
+
+    /**
+     * 解析舊版綠界物流 API 回應
+     *
+     * @return array<string, mixed>
+     *
+     * @throws \RuntimeException
+     */
+    private function parseEcpayResponse(string $responseBody): array
+    {
+        $parts = explode('|', $responseBody, 2);
+
+        if (count($parts) !== 2) {
+            throw new RuntimeException('Invalid ECPay logistics response.');
+        }
+
+        [$code, $message] = $parts;
+
+        if ($code !== '1') {
+            throw new RuntimeException('ECPay logistics error: '.$message);
+        }
+
+        parse_str($message, $parsedPayload);
+
+        return $parsedPayload;
     }
 }

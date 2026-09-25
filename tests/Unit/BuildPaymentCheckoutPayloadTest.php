@@ -8,6 +8,7 @@ use App\Gateways\Payments\PaymentGatewayManager;
 use App\Listeners\BuildPaymentCheckoutPayload;
 use App\Models\PaymentTransaction;
 use App\Repositories\PaymentTransactionRepository;
+use Illuminate\Contracts\Queue\ShouldQueue;
 use Illuminate\Database\Eloquent\ModelNotFoundException;
 use Illuminate\Foundation\Testing\RefreshDatabase;
 use Mockery;
@@ -23,6 +24,20 @@ class BuildPaymentCheckoutPayloadTest extends TestCase
         Mockery::close();
 
         parent::tearDown();
+    }
+
+    /**
+     * PaymentInitiated: listener 應同步建立 payload，讓後續付款流程可立即取得 checkout payload。
+     */
+    public function test_listener_should_not_be_queued(): void
+    {
+        $listener = new BuildPaymentCheckoutPayload(
+            new PaymentTransactionRepository,
+            Mockery::mock(PaymentGatewayManager::class),
+            Mockery::mock(LoggerInterface::class),
+        );
+
+        $this->assertNotInstanceOf(ShouldQueue::class, $listener);
     }
 
     /**
