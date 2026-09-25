@@ -6,11 +6,10 @@ use App\Events\PaymentInitiated;
 use App\Gateways\Payments\PaymentGatewayManager;
 use App\Models\PaymentTransaction;
 use App\Repositories\PaymentTransactionRepository;
-use Illuminate\Contracts\Queue\ShouldQueue;
 use Illuminate\Database\Eloquent\ModelNotFoundException;
 use Psr\Log\LoggerInterface;
 
-class BuildPaymentCheckoutPayload implements ShouldQueue
+class BuildPaymentCheckoutPayload
 {
     /**
      * @return void

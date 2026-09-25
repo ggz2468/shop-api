@@ -51,7 +51,7 @@ class SubmitShipmentRequestTest extends TestCase
         Event::fake([ShipmentCreated::class, ShipmentFailed::class]);
         Http::fake([
             'https://logistics-stage.ecpay.com.tw/Express/Create' => Http::response(
-                'RtnCode=1&RtnMsg=OK&AllPayLogisticsID=123456789&BookingNote=ABC123',
+                '1|RtnCode=1&RtnMsg=OK&AllPayLogisticsID=123456789&BookingNote=ABC123',
                 200,
                 ['Content-Type' => 'text/plain'],
             ),
@@ -189,12 +189,12 @@ class SubmitShipmentRequestTest extends TestCase
     /**
      * ShipmentRequestPayloadBuilt: 綠界回應失敗時應 dispatch ShipmentFailed。
      */
-    public function test_handle_marks_shipment_failed_when_ecpay_returns_failed_response(): void
+    public function test_handle_throws_runtime_exception_when_ecpay_returns_failed_response(): void
     {
         Event::fake([ShipmentCreated::class, ShipmentFailed::class]);
         Http::fake([
             'https://logistics-stage.ecpay.com.tw/Express/Create' => Http::response(
-                'RtnCode=0&RtnMsg=Invalid shipment request',
+                '0|Invalid shipment request',
                 200,
                 ['Content-Type' => 'text/plain'],
             ),
@@ -213,28 +213,23 @@ class SubmitShipmentRequestTest extends TestCase
         ]);
 
         $logger = Mockery::mock(LoggerInterface::class);
-        $logger->shouldReceive('warning')
-            ->once()
-            ->with('Shipment request is rejected by provider.', Mockery::on(fn (array $context): bool => $context['shipment_id'] === $shipment->id));
+        $logger->shouldReceive('warning')->never();
         $logger->shouldReceive('info')->never();
 
-        $this->makeListener($logger)->handle(new ShipmentRequestPayloadBuilt($shipment->id));
+        $this->expectException(RuntimeException::class);
+        $this->expectExceptionMessage('ECPay logistics error: Invalid shipment request');
 
-        $shipment->refresh();
+        try {
+            $this->makeListener($logger)->handle(new ShipmentRequestPayloadBuilt($shipment->id));
+        } finally {
+            $shipment->refresh();
 
-        $this->assertSame(Status::PENDING->value, $shipment->status);
-        $this->assertNull($shipment->tracking_number);
-        $this->assertNull($shipment->response_payload);
-        Event::assertDispatched(
-            ShipmentFailed::class,
-            fn (ShipmentFailed $event): bool => $event->shipmentId === $shipment->id
-                && $event->reason === 'Invalid shipment request'
-                && $event->providerPayload === [
-                    'RtnCode' => '0',
-                    'RtnMsg' => 'Invalid shipment request',
-                ],
-        );
-        Event::assertNotDispatched(ShipmentCreated::class);
+            $this->assertSame(Status::PENDING->value, $shipment->status);
+            $this->assertNull($shipment->tracking_number);
+            $this->assertNull($shipment->response_payload);
+            Event::assertNotDispatched(ShipmentCreated::class);
+            Event::assertNotDispatched(ShipmentFailed::class);
+        }
     }
 
     /**
@@ -293,7 +288,7 @@ class SubmitShipmentRequestTest extends TestCase
         Event::fake([ShipmentCreated::class, ShipmentFailed::class]);
         Http::fake([
             'https://logistics-stage.ecpay.com.tw/Express/Create' => Http::response(
-                'Unexpected provider response',
+                '1|RtnMsg=OK',
                 200,
                 ['Content-Type' => 'text/plain'],
             ),
@@ -330,9 +325,9 @@ class SubmitShipmentRequestTest extends TestCase
                 && $event->reason === 'Invalid shipment provider response.'
                 && $event->providerPayload === [
                     'error_type' => 'invalid_provider_response',
-                    'body' => 'Unexpected provider response',
+                    'body' => '1|RtnMsg=OK',
                     'parsed_payload' => [
-                        'Unexpected_provider_response' => '',
+                        'RtnMsg' => 'OK',
                     ],
                 ],
         );

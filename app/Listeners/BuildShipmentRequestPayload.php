@@ -8,11 +8,10 @@ use App\Gateways\Shipments\ShipmentGatewayManager;
 use App\Models\Shipment;
 use App\Repositories\ShipmentRepository;
 use Illuminate\Contracts\Events\Dispatcher;
-use Illuminate\Contracts\Queue\ShouldQueue;
 use Illuminate\Database\Eloquent\ModelNotFoundException;
 use Psr\Log\LoggerInterface;
 
-class BuildShipmentRequestPayload implements ShouldQueue
+class BuildShipmentRequestPayload
 {
     /**
      * @return void

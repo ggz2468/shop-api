@@ -5,10 +5,11 @@ namespace Tests\Unit;
 use App\Enums\Shipment\Provider;
 use App\Enums\Shipment\Status as ShipmentStatus;
 use App\Events\ShipmentDelivered;
-use App\Events\ShipmentFailed;
 use App\Events\ShipmentShipped;
 use App\Gateways\Shipments\EcpayLogisticsGateway;
+use App\Models\Order;
 use App\Models\Shipment;
+use App\Repositories\OrderRepository;
 use App\Repositories\ShipmentRepository;
 use App\Services\EcpayShipmentCallbackService;
 use Illuminate\Contracts\Events\Dispatcher;
@@ -34,7 +35,7 @@ class EcpayShipmentCallbackServiceTest extends TestCase
      */
     public function test_handle_dispatches_shipment_shipped_for_shipped_status(): void
     {
-        Event::fake([ShipmentShipped::class, ShipmentDelivered::class, ShipmentFailed::class]);
+        Event::fake([ShipmentShipped::class, ShipmentDelivered::class]);
         $this->setEcpayLogisticsConfig();
         $shipment = $this->createEcpayShipment();
         $payload = $this->signedCallbackPayload([
@@ -52,7 +53,6 @@ class EcpayShipmentCallbackServiceTest extends TestCase
                 && ! array_key_exists('CheckMacValue', $event->providerPayload),
         );
         Event::assertNotDispatched(ShipmentDelivered::class);
-        Event::assertNotDispatched(ShipmentFailed::class);
     }
 
     /**
@@ -60,7 +60,7 @@ class EcpayShipmentCallbackServiceTest extends TestCase
      */
     public function test_handle_dispatches_shipment_delivered_for_delivered_status(): void
     {
-        Event::fake([ShipmentShipped::class, ShipmentDelivered::class, ShipmentFailed::class]);
+        Event::fake([ShipmentShipped::class, ShipmentDelivered::class]);
         $this->setEcpayLogisticsConfig();
         $shipment = $this->createEcpayShipment([
             'tracking_number' => '123456790',
@@ -80,17 +80,16 @@ class EcpayShipmentCallbackServiceTest extends TestCase
                 && $event->providerPayload['LogisticsStatus'] === '2067',
         );
         Event::assertNotDispatched(ShipmentShipped::class);
-        Event::assertNotDispatched(ShipmentFailed::class);
     }
 
     /**
-     * 綠界物流回呼 Service: 物流失敗狀態應 dispatch ShipmentFailed。
+     * 綠界物流回呼 Service: 物流失敗狀態沒有貨態轉移時應直接確認且不 dispatch event。
      */
-    public function test_handle_dispatches_shipment_failed_for_failed_status(): void
+    public function test_handle_acknowledges_failed_status_without_dispatching_event(): void
     {
-        Event::fake([ShipmentShipped::class, ShipmentDelivered::class, ShipmentFailed::class]);
+        Event::fake([ShipmentShipped::class, ShipmentDelivered::class]);
         $this->setEcpayLogisticsConfig();
-        $shipment = $this->createEcpayShipment([
+        $this->createEcpayShipment([
             'tracking_number' => '123456791',
         ]);
         $payload = $this->signedCallbackPayload([
@@ -102,12 +101,6 @@ class EcpayShipmentCallbackServiceTest extends TestCase
         $result = $this->makeService()->handle($payload);
 
         $this->assertSame(['status' => 200, 'content' => '1|OK'], $result);
-        Event::assertDispatched(
-            ShipmentFailed::class,
-            fn (ShipmentFailed $event): bool => $event->shipmentId === $shipment->id
-                && $event->reason === 'Shipment failed'
-                && $event->providerPayload['LogisticsStatus'] === '2001',
-        );
         Event::assertNotDispatched(ShipmentShipped::class);
         Event::assertNotDispatched(ShipmentDelivered::class);
     }
@@ -117,7 +110,7 @@ class EcpayShipmentCallbackServiceTest extends TestCase
      */
     public function test_handle_acknowledges_delivered_shipment_without_dispatching_event(): void
     {
-        Event::fake([ShipmentShipped::class, ShipmentDelivered::class, ShipmentFailed::class]);
+        Event::fake([ShipmentShipped::class, ShipmentDelivered::class]);
         $this->setEcpayLogisticsConfig();
         $this->createEcpayShipment([
             'tracking_number' => '123456792',
@@ -125,7 +118,7 @@ class EcpayShipmentCallbackServiceTest extends TestCase
         ]);
         $payload = $this->signedCallbackPayload([
             'AllPayLogisticsID' => '123456792',
-            'LogisticsStatus' => '300',
+            'LogisticsStatus' => '2001',
         ]);
 
         $result = $this->makeService()->handle($payload);
@@ -133,7 +126,6 @@ class EcpayShipmentCallbackServiceTest extends TestCase
         $this->assertSame(['status' => 200, 'content' => '1|OK'], $result);
         Event::assertNotDispatched(ShipmentShipped::class);
         Event::assertNotDispatched(ShipmentDelivered::class);
-        Event::assertNotDispatched(ShipmentFailed::class);
     }
 
     /**
@@ -141,7 +133,7 @@ class EcpayShipmentCallbackServiceTest extends TestCase
      */
     public function test_handle_rejects_invalid_check_mac_value(): void
     {
-        Event::fake([ShipmentShipped::class, ShipmentDelivered::class, ShipmentFailed::class]);
+        Event::fake([ShipmentShipped::class, ShipmentDelivered::class]);
         $this->setEcpayLogisticsConfig();
         $this->createEcpayShipment();
         $logger = Mockery::mock(LoggerInterface::class);
@@ -156,7 +148,6 @@ class EcpayShipmentCallbackServiceTest extends TestCase
         $this->assertSame(['status' => 400, 'content' => '0|Invalid CheckMacValue'], $result);
         Event::assertNotDispatched(ShipmentShipped::class);
         Event::assertNotDispatched(ShipmentDelivered::class);
-        Event::assertNotDispatched(ShipmentFailed::class);
     }
 
     /**
@@ -164,7 +155,7 @@ class EcpayShipmentCallbackServiceTest extends TestCase
      */
     public function test_handle_rejects_missing_required_field(): void
     {
-        Event::fake([ShipmentShipped::class, ShipmentDelivered::class, ShipmentFailed::class]);
+        Event::fake([ShipmentShipped::class, ShipmentDelivered::class]);
         $this->setEcpayLogisticsConfig();
         $logger = Mockery::mock(LoggerInterface::class);
         $logger->shouldReceive('warning')->once();
@@ -178,7 +169,6 @@ class EcpayShipmentCallbackServiceTest extends TestCase
         $this->assertSame(['status' => 400, 'content' => '0|Missing required field: AllPayLogisticsID'], $result);
         Event::assertNotDispatched(ShipmentShipped::class);
         Event::assertNotDispatched(ShipmentDelivered::class);
-        Event::assertNotDispatched(ShipmentFailed::class);
     }
 
     /**
@@ -186,7 +176,7 @@ class EcpayShipmentCallbackServiceTest extends TestCase
      */
     public function test_handle_rejects_invalid_merchant_id(): void
     {
-        Event::fake([ShipmentShipped::class, ShipmentDelivered::class, ShipmentFailed::class]);
+        Event::fake([ShipmentShipped::class, ShipmentDelivered::class]);
         $this->setEcpayLogisticsConfig();
         $logger = Mockery::mock(LoggerInterface::class);
         $logger->shouldReceive('warning')->once();
@@ -200,7 +190,6 @@ class EcpayShipmentCallbackServiceTest extends TestCase
         $this->assertSame(['status' => 400, 'content' => '0|Invalid MerchantID'], $result);
         Event::assertNotDispatched(ShipmentShipped::class);
         Event::assertNotDispatched(ShipmentDelivered::class);
-        Event::assertNotDispatched(ShipmentFailed::class);
     }
 
     /**
@@ -208,8 +197,11 @@ class EcpayShipmentCallbackServiceTest extends TestCase
      */
     public function test_handle_rejects_unknown_shipment(): void
     {
-        Event::fake([ShipmentShipped::class, ShipmentDelivered::class, ShipmentFailed::class]);
+        Event::fake([ShipmentShipped::class, ShipmentDelivered::class]);
         $this->setEcpayLogisticsConfig();
+        Order::factory()->create([
+            'number' => 'ORD202609220000',
+        ]);
         $logger = Mockery::mock(LoggerInterface::class);
         $logger->shouldReceive('warning')->once();
         $logger->shouldReceive('error')->never();
@@ -222,19 +214,19 @@ class EcpayShipmentCallbackServiceTest extends TestCase
         $this->assertSame(['status' => 404, 'content' => '0|Shipment not found'], $result);
         Event::assertNotDispatched(ShipmentShipped::class);
         Event::assertNotDispatched(ShipmentDelivered::class);
-        Event::assertNotDispatched(ShipmentFailed::class);
     }
 
     /**
-     * 綠界物流回呼 Service: 不支援的物流狀態應回傳 400。
+     * 綠界物流回呼 Service: 不支援的物流狀態應直接確認且不 dispatch event。
      */
-    public function test_handle_rejects_unsupported_logistics_status(): void
+    public function test_handle_acknowledges_unsupported_logistics_status_without_dispatching_event(): void
     {
-        Event::fake([ShipmentShipped::class, ShipmentDelivered::class, ShipmentFailed::class]);
+        Event::fake([ShipmentShipped::class, ShipmentDelivered::class]);
         $this->setEcpayLogisticsConfig();
         $this->createEcpayShipment();
         $logger = Mockery::mock(LoggerInterface::class);
-        $logger->shouldReceive('warning')->once();
+        $logger->shouldReceive('info')->once();
+        $logger->shouldReceive('warning')->never();
         $logger->shouldReceive('error')->never();
         $payload = $this->signedCallbackPayload([
             'LogisticsStatus' => '9999',
@@ -242,10 +234,9 @@ class EcpayShipmentCallbackServiceTest extends TestCase
 
         $result = $this->makeService($logger)->handle($payload);
 
-        $this->assertSame(['status' => 400, 'content' => '0|Unsupported LogisticsStatus'], $result);
+        $this->assertSame(['status' => 200, 'content' => '1|OK'], $result);
         Event::assertNotDispatched(ShipmentShipped::class);
         Event::assertNotDispatched(ShipmentDelivered::class);
-        Event::assertNotDispatched(ShipmentFailed::class);
     }
 
     /**
@@ -253,7 +244,11 @@ class EcpayShipmentCallbackServiceTest extends TestCase
      */
     private function createEcpayShipment(array $attributes = []): Shipment
     {
-        return Shipment::factory()->create(array_merge([
+        $order = Order::factory()->create([
+            'number' => 'ORD202609220000',
+        ]);
+
+        return Shipment::factory()->for($order)->create(array_merge([
             'provider' => Provider::ECPAY_LOGISTICS->value,
             'tracking_number' => '123456789',
             'status' => ShipmentStatus::CREATED->value,
@@ -315,6 +310,7 @@ class EcpayShipmentCallbackServiceTest extends TestCase
     private function makeService(?LoggerInterface $logger = null): EcpayShipmentCallbackService
     {
         return new EcpayShipmentCallbackService(
+            new OrderRepository,
             new ShipmentRepository,
             app(EcpayLogisticsGateway::class),
             app(Dispatcher::class),

@@ -3,12 +3,12 @@
 namespace App\Services;
 
 use App\Enums\Shipment\Provider;
-use App\Enums\Shipment\Status as ShipmentStatus;
 use App\Events\ShipmentDelivered;
-use App\Events\ShipmentFailed;
 use App\Events\ShipmentShipped;
 use App\Gateways\Shipments\EcpayLogisticsGateway;
+use App\Models\Order;
 use App\Models\Shipment;
+use App\Repositories\OrderRepository;
 use App\Repositories\ShipmentRepository;
 use Illuminate\Contracts\Config\Repository as ConfigRepository;
 use Illuminate\Contracts\Events\Dispatcher;
@@ -19,6 +19,7 @@ use Throwable;
 class EcpayShipmentCallbackService
 {
     public function __construct(
+        private OrderRepository $orderRepository,
         private ShipmentRepository $shipmentRepository,
         private EcpayLogisticsGateway $ecpayLogisticsGateway,
         private Dispatcher $events,
@@ -42,8 +43,6 @@ class EcpayShipmentCallbackService
                 'AllPayLogisticsID',
                 'LogisticsType',
                 'LogisticsSubType',
-                'LogisticsStatus',
-                'LogisticsStatusName',
                 'GoodsAmount',
                 'UpdateStatusDate',
                 'RtnCode',
@@ -70,10 +69,16 @@ class EcpayShipmentCallbackService
                 throw new RuntimeException('0|Invalid MerchantID', 400);
             }
 
-            // 取得物流單
+            $order = $this->orderRepository->first(['number', $payload['MerchantTradeNo']]);
+
+            // 檢查訂單是否存在
+            if (! $order instanceof Order) {
+                throw new RuntimeException('0|Order not found', 404);
+            }
+
             $shipment = $this->shipmentRepository->first([
+                ['order_id', $order->id],
                 ['provider', Provider::ECPAY_LOGISTICS->value],
-                ['tracking_number', $payload['AllPayLogisticsID']],
             ]);
 
             // 檢查物流單是否存在
@@ -83,13 +88,13 @@ class EcpayShipmentCallbackService
 
             $event = $this->resolveEvent($shipment, $payload);
 
-            // 檢查 LogisticsStatus 是否為預期中的值
+            // 檢查綠界物流是否提供貨態資訊
             if ($event === null) {
-                throw new RuntimeException('0|Unsupported LogisticsStatus', 400);
-            }
+                $this->logger->info('Ecpay shipment callback does not require shipment state transition.', [
+                    'shipment_id' => $shipment->id,
+                    'payload' => $payload,
+                ]);
 
-            // 如果物流單狀態為「已送達」，則直接確認且不觸發任何事件
-            if ($shipment->status === ShipmentStatus::DELIVERED->value) {
                 return [
                     'status' => 200,
                     'content' => '1|OK',
@@ -168,14 +173,13 @@ class EcpayShipmentCallbackService
     /**
      * @param  array<string, mixed>  $payload
      */
-    private function resolveEvent(Shipment $shipment, array $payload): ShipmentShipped|ShipmentDelivered|ShipmentFailed|null
+    private function resolveEvent(Shipment $shipment, array $payload): ShipmentShipped|ShipmentDelivered|null
     {
         $logisticsStatus = $payload['LogisticsStatus'] ?? null;
 
         return match ($logisticsStatus) {
             '300' => new ShipmentShipped($shipment->id, $payload),
-            '2067' => new ShipmentDelivered($shipment->id, $payload),
-            '2001' => new ShipmentFailed($shipment->id, $payload['RtnMsg'] ?? '', $payload),
+            '2063', '2073', '3018', '2067', '3022' => new ShipmentDelivered($shipment->id, $payload),
             default => null,
         };
     }

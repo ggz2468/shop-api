@@ -8,7 +8,9 @@ use App\Events\ShipmentDelivered;
 use App\Models\Shipment;
 use App\Repositories\OrderRepository;
 use App\Repositories\ShipmentRepository;
+use Illuminate\Database\ConnectionInterface;
 use Illuminate\Database\Eloquent\ModelNotFoundException;
+use RuntimeException;
 
 class MarkOrderAsDelivered
 {
@@ -16,30 +18,45 @@ class MarkOrderAsDelivered
      * @return void
      */
     public function __construct(
-        private ShipmentRepository $shipmentRepository,
         private OrderRepository $orderRepository,
+        private ShipmentRepository $shipmentRepository,
+        private ConnectionInterface $db,
     ) {}
 
     public function handle(ShipmentDelivered $event): void
     {
-        $shipment = $this->shipmentRepository->first(['id', $event->shipmentId]);
+        $this->db->transaction(function () use ($event) {
+            $shipment = $this->shipmentRepository->first(['id', $event->shipmentId]);
 
-        if (! $shipment instanceof Shipment) {
-            throw new ModelNotFoundException("Shipment with ID {$event->shipmentId} not found.");
-        }
+            if (! $shipment instanceof Shipment) {
+                throw new ModelNotFoundException("Shipment with ID {$event->shipmentId} not found.");
+            }
 
-        $shipmentData = [
-            'status' => ShipmentStatus::DELIVERED->value,
-            'delivered_at' => now(),
-        ];
+            if ($shipment->status !== ShipmentStatus::SHIPPED->value) {
+                return;
+            }
 
-        if ($event->providerPayload !== null) {
-            $shipmentData['response_payload'] = $event->providerPayload;
-        }
+            $shipmentData = [
+                'status' => ShipmentStatus::DELIVERED->value,
+                'delivered_at' => now(),
+            ];
 
-        $this->shipmentRepository->update(['id', $shipment->id], $shipmentData);
-        $this->orderRepository->update(['id', $shipment->order_id], [
-            'status' => OrderStatus::DELIVERED->value,
-        ]);
+            if ($event->providerPayload !== null) {
+                $shipmentData['response_payload'] = $event->providerPayload;
+            }
+
+            if ($this->shipmentRepository->update([
+                ['id', $shipment->id],
+                ['status', ShipmentStatus::SHIPPED->value],
+            ], $shipmentData) < 1) {
+                throw new RuntimeException("Failed to update shipment with ID {$shipment->id}.");
+            }
+
+            if ($this->orderRepository->update(['id', $shipment->order_id], [
+                'status' => OrderStatus::DELIVERED->value,
+            ]) < 1) {
+                throw new RuntimeException("Failed to update order with ID {$shipment->order_id}.");
+            }
+        });
     }
 }
