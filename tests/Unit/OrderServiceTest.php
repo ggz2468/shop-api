@@ -63,14 +63,17 @@ class OrderServiceTest extends TestCase
         app(CartStore::class)->storeItem($member->id, $productVariant->id, 2);
 
         $result = app(OrderService::class)->storeOrder(
-            $member->id,
-            '01J3QS2AJMZV09DNXQ2EE4NM2E',
-            PaymentMethod::CREDIT_CARD->value,
-            ShippingMethod::CONVENIENCE_STORE->value,
-            'UNIMART001',
-            StoreType::UNIMART->value,
-            '信義門市',
-            '台北市信義區測試路 1 號',
+            memberId: $member->id,
+            idempotencyKey: '01J3QS2AJMZV09DNXQ2EE4NM2E',
+            paymentMethod: PaymentMethod::CREDIT_CARD->value,
+            shippingMethod: ShippingMethod::CONVENIENCE_STORE->value,
+            recipientData: $this->recipientData(address: null),
+            storeData: [
+                'code' => 'UNIMART001',
+                'type' => StoreType::UNIMART->value,
+                'name' => '信義門市',
+                'address' => '台北市信義區測試路 1 號',
+            ],
         );
 
         $this->assertSame(201, $result['status']);
@@ -143,9 +146,10 @@ class OrderServiceTest extends TestCase
         app(CartStore::class)->storeItem($member->id, $productVariant->id, 1);
 
         $result = app(OrderService::class)->storeOrder(
-            $member->id,
-            '01J3QS2AJMZV09DNXQ2EE4NM2F',
-            PaymentMethod::CREDIT_CARD->value,
+            memberId: $member->id,
+            idempotencyKey: '01J3QS2AJMZV09DNXQ2EE4NM2F',
+            paymentMethod: PaymentMethod::CREDIT_CARD->value,
+            recipientData: $this->recipientData(),
         );
 
         $this->assertSame(201, $result['status']);
@@ -179,9 +183,10 @@ class OrderServiceTest extends TestCase
         app(CartStore::class)->storeItem($member->id, $firstVariant->id, 2);
 
         $result = app(OrderService::class)->storeOrder(
-            $member->id,
-            '01J3QS2AJMZV09DNXQ2EE4NM2O',
-            PaymentMethod::CREDIT_CARD->value,
+            memberId: $member->id,
+            idempotencyKey: '01J3QS2AJMZV09DNXQ2EE4NM2O',
+            paymentMethod: PaymentMethod::CREDIT_CARD->value,
+            recipientData: $this->recipientData(),
         );
 
         $this->assertSame(201, $result['status']);
@@ -392,9 +397,10 @@ class OrderServiceTest extends TestCase
             ->andReturn(false);
 
         $result = $this->makeOrderService(orderDetailRepository: $orderDetailRepository)->storeOrder(
-            $member->id,
-            '01J3QS2AJMZV09DNXQ2EE4NM2L',
-            PaymentMethod::CREDIT_CARD->value,
+            memberId: $member->id,
+            idempotencyKey: '01J3QS2AJMZV09DNXQ2EE4NM2L',
+            paymentMethod: PaymentMethod::CREDIT_CARD->value,
+            recipientData: $this->recipientData(),
         );
 
         $this->assertSame(503, $result['status']);
@@ -673,5 +679,17 @@ class OrderServiceTest extends TestCase
         }
 
         $this->fail('Expected duplicate order number to throw a query exception.');
+    }
+
+    /**
+     * @return array{name: string, phone: string, address: ?string}
+     */
+    private function recipientData(?string $address = '台北市信義區測試路 1 號'): array
+    {
+        return [
+            'name' => '王小明',
+            'phone' => '0912345678',
+            'address' => $address,
+        ];
     }
 }

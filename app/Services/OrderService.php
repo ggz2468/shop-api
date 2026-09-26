@@ -76,6 +76,8 @@ class OrderService
     /**
      * 從會員購物車建立訂單
      *
+     * @param  array{name?: string, phone?: string, address?: string}  $recipientData
+     * @param  array{type?: string, code?: string, name?: string, address?: string}  $storeData
      * @return array<string, mixed>
      */
     public function storeOrder(
@@ -83,16 +85,16 @@ class OrderService
         string $idempotencyKey,
         int $paymentMethod,
         ?int $shippingMethod = null,
-        ?string $storeCode = null,
-        ?string $storeType = null,
-        ?string $storeName = null,
-        ?string $storeAddress = null,
+        ?array $recipientData = null,
+        ?array $storeData = null,
     ): array {
         $shippingMethod ??= ShippingMethod::HOME_DELIVERY->value;
+        $recipientData ??= [];
+        $storeData ??= [];
 
         try {
             return $this->cache->lock("checkout:member:{$memberId}", self::CHECKOUT_LOCK_SECONDS)
-                ->block(self::CHECKOUT_LOCK_WAIT_SECONDS, fn () => $this->storeOrderWithLock($memberId, $idempotencyKey, $paymentMethod, $shippingMethod, $storeCode, $storeType, $storeName, $storeAddress));
+                ->block(self::CHECKOUT_LOCK_WAIT_SECONDS, fn () => $this->storeOrderWithLock($memberId, $idempotencyKey, $paymentMethod, $shippingMethod, $recipientData, $storeData));
         } catch (LockTimeoutException $e) {
             return [
                 'status' => 409,
@@ -145,6 +147,9 @@ class OrderService
             'tax_amount' => $order->tax_amount,
             'shipping_fee' => $order->shipping_fee,
             'shipping_method' => $order->shipping_method,
+            'recipient_name' => $order->recipient_name,
+            'recipient_phone' => $order->recipient_phone,
+            'recipient_address' => $order->recipient_address,
             'store_type' => $order->store_type,
             'store_code' => $order->store_code,
             'store_name' => $order->store_name,
@@ -166,9 +171,11 @@ class OrderService
     }
 
     /**
+     * @param  array{name?: string, phone?: string, address?: string}  $recipientData
+     * @param  array{type?: string, code?: string, name?: string, address?: string}  $storeData
      * @return array<string, mixed>
      */
-    private function storeOrderWithLock(int $memberId, string $idempotencyKey, int $paymentMethod, int $shippingMethod, ?string $storeCode, ?string $storeType, ?string $storeName, ?string $storeAddress): array
+    private function storeOrderWithLock(int $memberId, string $idempotencyKey, int $paymentMethod, int $shippingMethod, array $recipientData, array $storeData): array
     {
         try {
             // 取得既有訂單資料
@@ -195,7 +202,7 @@ class OrderService
             }
 
             $order = $existingOrder = null;
-            $this->db->transaction(function () use ($memberId, $idempotencyKey, $paymentMethod, $shippingMethod, $storeCode, $storeType, $storeName, $storeAddress, &$cartItems, &$order, &$existingOrder) {
+            $this->db->transaction(function () use ($memberId, $idempotencyKey, $paymentMethod, $shippingMethod, $recipientData, $storeData, &$cartItems, &$order, &$existingOrder) {
                 // 取得既有訂單資料
                 $existingOrder = $this->orderRepository->first([
                     ['member_id', $memberId],
@@ -265,10 +272,13 @@ class OrderService
                     'tax_amount' => $this->calculateTaxAmount($totalAmount),
                     'shipping_fee' => $this->calculateShippingFee($totalAmount),
                     'shipping_method' => $shippingMethod,
-                    'store_type' => $storeType,
-                    'store_code' => $storeCode,
-                    'store_name' => $storeName,
-                    'store_address' => $storeAddress,
+                    'recipient_name' => $recipientData['name'] ?? null,
+                    'recipient_phone' => $recipientData['phone'] ?? null,
+                    'recipient_address' => $recipientData['address'] ?? null,
+                    'store_type' => $storeData['type'] ?? null,
+                    'store_code' => $storeData['code'] ?? null,
+                    'store_name' => $storeData['name'] ?? null,
+                    'store_address' => $storeData['address'] ?? null,
                     'status' => Status::STOCKING->value,
                     'payment_method' => $paymentMethod,
                     'payment_status' => PaymentStatus::UNPAID->value,

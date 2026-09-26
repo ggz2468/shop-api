@@ -44,21 +44,19 @@ class CreateShipment
             return;
         }
 
-        $paymentTransaction->load('order.member');
+        $paymentTransaction->load('order');
         $order = $paymentTransaction->order;
 
         if ($order === null) {
             throw new ModelNotFoundException("Order with ID {$paymentTransaction->order_id} not found.");
         }
 
-        $member = $order->member;
-        $recipientName = trim((string) ($member?->last_name ?? '').(string) ($member?->first_name ?? ''));
         $provider = $this->resolveDefaultProvider();
         $shippingMethod = $this->resolveShippingMethod($order->shipping_method);
         $recipientData = [
-            'name' => $recipientName !== '' ? $recipientName : '會員',
-            'phone' => (string) ($member?->phone ?? ''),
-            'address' => $member?->address,
+            'name' => $order->recipient_name,
+            'phone' => $order->recipient_phone,
+            'address' => $order->recipient_address,
         ];
         $storeData = [
             'type' => $this->resolveStoreType($order->store_type)?->value,

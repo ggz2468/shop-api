@@ -39,16 +39,17 @@ class CreateShipmentTest extends TestCase
         $paymentTransaction = PaymentTransaction::factory()->create([
             'order_id' => Order::factory()->create([
                 'shipping_method' => OrderShippingMethod::CONVENIENCE_STORE->value,
+                'recipient_name' => '王小明',
+                'recipient_phone' => '0912345678',
+                'recipient_address' => null,
                 'store_type' => OrderStoreType::UNIMART->value,
                 'store_code' => 'UNIMART001',
                 'store_name' => '信義門市',
                 'store_address' => '台北市信義區測試路 1 號',
             ])->id,
         ]);
-        $paymentTransaction->load('order.member');
+        $paymentTransaction->load('order');
         $order = $paymentTransaction->order;
-        $member = $order->member;
-        $recipientName = $member->last_name.$member->first_name;
 
         $this->makeListener()->handle(new PaymentSucceeded($paymentTransaction->id));
 
@@ -60,18 +61,18 @@ class CreateShipmentTest extends TestCase
         $this->assertSame('台北市信義區測試路 1 號', $shipment->store_address);
         $this->assertSame(Provider::ECPAY_LOGISTICS->value, $shipment->provider);
         $this->assertNull($shipment->tracking_number);
-        $this->assertSame($recipientName, $shipment->recipient_name);
-        $this->assertSame($member->phone, $shipment->recipient_phone);
-        $this->assertSame($member->address, $shipment->recipient_address);
+        $this->assertSame('王小明', $shipment->recipient_name);
+        $this->assertSame('0912345678', $shipment->recipient_phone);
+        $this->assertNull($shipment->recipient_address);
         $this->assertSame('UNIMART001', $shipment->store_code);
         $this->assertEquals([
             'order_number' => $order->number,
             'provider' => Provider::ECPAY_LOGISTICS->value,
             'shipping_method' => ShippingMethod::CONVENIENCE_STORE->value,
             'recipient' => [
-                'name' => $recipientName,
-                'phone' => $member->phone,
-                'address' => $member->address,
+                'name' => '王小明',
+                'phone' => '0912345678',
+                'address' => null,
             ],
             'store' => [
                 'type' => StoreType::UNIMART->value,
