@@ -28,6 +28,7 @@ class ShipmentFactory extends Factory
             'shipping_method' => $this->faker->randomElement(ShippingMethod::cases())->value,
             'recipient_name' => $this->faker->name(),
             'recipient_phone' => $this->faker->regexify('09[0-9]{8}'),
+            'recipient_zip_code' => $this->faker->postcode(),
             'recipient_address' => $this->faker->address(),
             'store_code' => null,
             'store_type' => null,

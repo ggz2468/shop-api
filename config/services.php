@@ -87,6 +87,8 @@ return [
         'home_logistics_sub_type' => env('ECPAY_LOGISTICS_HOME_LOGISTICS_SUB_TYPE', 'TCAT'),
         'sender_name' => env('ECPAY_LOGISTICS_SENDER_NAME'),
         'sender_cell_phone' => env('ECPAY_LOGISTICS_SENDER_CELL_PHONE'),
+        'sender_zip_code' => env('ECPAY_LOGISTICS_SENDER_ZIP_CODE'),
+        'sender_address' => env('ECPAY_LOGISTICS_SENDER_ADDRESS'),
         'store_map_action_url' => env('ECPAY_LOGISTICS_STORE_MAP_ACTION_URL'),
         'store_map_server_reply_url' => env('ECPAY_LOGISTICS_STORE_MAP_SERVER_REPLY_URL'),
         'store_map_client_redirect_url' => env('ECPAY_LOGISTICS_STORE_MAP_CLIENT_REDIRECT_URL'),

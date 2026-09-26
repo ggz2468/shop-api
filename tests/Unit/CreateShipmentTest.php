@@ -41,6 +41,7 @@ class CreateShipmentTest extends TestCase
                 'shipping_method' => OrderShippingMethod::CONVENIENCE_STORE->value,
                 'recipient_name' => '王小明',
                 'recipient_phone' => '0912345678',
+                'recipient_zip_code' => null,
                 'recipient_address' => null,
                 'store_type' => OrderStoreType::UNIMART->value,
                 'store_code' => 'UNIMART001',
@@ -63,6 +64,7 @@ class CreateShipmentTest extends TestCase
         $this->assertNull($shipment->tracking_number);
         $this->assertSame('王小明', $shipment->recipient_name);
         $this->assertSame('0912345678', $shipment->recipient_phone);
+        $this->assertNull($shipment->recipient_zip_code);
         $this->assertNull($shipment->recipient_address);
         $this->assertSame('UNIMART001', $shipment->store_code);
         $this->assertEquals([
@@ -72,6 +74,7 @@ class CreateShipmentTest extends TestCase
             'recipient' => [
                 'name' => '王小明',
                 'phone' => '0912345678',
+                'zip_code' => null,
                 'address' => null,
             ],
             'store' => [

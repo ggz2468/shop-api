@@ -93,6 +93,7 @@ class EcpayLogisticsGatewayTest extends TestCase
             'shipping_method' => ShippingMethod::HOME_DELIVERY->value,
             'recipient_name' => '陳美玲',
             'recipient_phone' => '0987654321',
+            'recipient_zip_code' => '407',
             'recipient_address' => '台中市西屯區測試路 9 號',
             'store_code' => null,
             'store_type' => null,
@@ -106,6 +107,9 @@ class EcpayLogisticsGatewayTest extends TestCase
         $this->assertSame('TCAT', $shipmentRequest['params']['LogisticsSubType']);
         $this->assertSame('陳美玲', $shipmentRequest['params']['ReceiverName']);
         $this->assertSame('0987654321', $shipmentRequest['params']['ReceiverCellPhone']);
+        $this->assertSame('100', $shipmentRequest['params']['SenderZipCode']);
+        $this->assertSame('台北市中正區測試路 1 號', $shipmentRequest['params']['SenderAddress']);
+        $this->assertSame('407', $shipmentRequest['params']['ReceiverZipCode']);
         $this->assertSame('台中市西屯區測試路 9 號', $shipmentRequest['params']['ReceiverAddress']);
         $this->assertArrayNotHasKey('ReceiverStoreID', $shipmentRequest['params']);
         $this->assertMatchesRegularExpression('/^[A-F0-9]{32}$/', $shipmentRequest['params']['CheckMacValue']);
@@ -150,6 +154,24 @@ class EcpayLogisticsGatewayTest extends TestCase
 
         $this->expectException(RuntimeException::class);
         $this->expectExceptionMessage('Shipment recipient address is required for home delivery.');
+
+        app(EcpayLogisticsGateway::class)->buildShipmentRequest($shipment);
+    }
+
+    /**
+     * 綠界物流 Gateway: 宅配缺少收件人郵遞區號時應拋出明確例外。
+     */
+    public function test_build_shipment_request_throws_runtime_exception_when_home_delivery_recipient_zip_code_is_missing(): void
+    {
+        $this->setValidEcpayLogisticsConfig();
+        $shipment = Shipment::factory()->create([
+            'shipping_method' => ShippingMethod::HOME_DELIVERY->value,
+            'recipient_zip_code' => null,
+            'recipient_address' => '台中市西屯區測試路 9 號',
+        ]);
+
+        $this->expectException(RuntimeException::class);
+        $this->expectExceptionMessage('Shipment recipient zip code is required for home delivery.');
 
         app(EcpayLogisticsGateway::class)->buildShipmentRequest($shipment);
     }
@@ -238,6 +260,42 @@ class EcpayLogisticsGatewayTest extends TestCase
 
         $this->expectException(RuntimeException::class);
         $this->expectExceptionMessage('services.ecpay_logistics.home_logistics_sub_type is not configured.');
+
+        app(EcpayLogisticsGateway::class)->buildShipmentRequest($shipment);
+    }
+
+    /**
+     * 綠界物流 Gateway: 宅配缺少寄件人郵遞區號設定時應拋出明確例外。
+     */
+    public function test_build_shipment_request_throws_runtime_exception_when_home_delivery_sender_zip_code_is_missing(): void
+    {
+        $this->setValidEcpayLogisticsConfig();
+        config()->set('services.ecpay_logistics.sender_zip_code', '');
+        $shipment = Shipment::factory()->create([
+            'shipping_method' => ShippingMethod::HOME_DELIVERY->value,
+            'recipient_address' => '台中市西屯區測試路 9 號',
+        ]);
+
+        $this->expectException(RuntimeException::class);
+        $this->expectExceptionMessage('services.ecpay_logistics.sender_zip_code is not configured.');
+
+        app(EcpayLogisticsGateway::class)->buildShipmentRequest($shipment);
+    }
+
+    /**
+     * 綠界物流 Gateway: 宅配缺少寄件人地址設定時應拋出明確例外。
+     */
+    public function test_build_shipment_request_throws_runtime_exception_when_home_delivery_sender_address_is_missing(): void
+    {
+        $this->setValidEcpayLogisticsConfig();
+        config()->set('services.ecpay_logistics.sender_address', '');
+        $shipment = Shipment::factory()->create([
+            'shipping_method' => ShippingMethod::HOME_DELIVERY->value,
+            'recipient_address' => '台中市西屯區測試路 9 號',
+        ]);
+
+        $this->expectException(RuntimeException::class);
+        $this->expectExceptionMessage('services.ecpay_logistics.sender_address is not configured.');
 
         app(EcpayLogisticsGateway::class)->buildShipmentRequest($shipment);
     }
@@ -339,6 +397,8 @@ class EcpayLogisticsGatewayTest extends TestCase
         config()->set('services.ecpay_logistics.create_server_reply_url', 'http://localhost/api/shipment-callbacks/ecpay');
         config()->set('services.ecpay_logistics.sender_name', 'Shop API');
         config()->set('services.ecpay_logistics.sender_cell_phone', '0911222333');
+        config()->set('services.ecpay_logistics.sender_zip_code', '100');
+        config()->set('services.ecpay_logistics.sender_address', '台北市中正區測試路 1 號');
     }
 
     /**

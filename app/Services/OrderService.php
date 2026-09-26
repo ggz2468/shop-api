@@ -76,7 +76,7 @@ class OrderService
     /**
      * 從會員購物車建立訂單
      *
-     * @param  array{name?: string, phone?: string, address?: string}  $recipientData
+     * @param  array{name?: string, phone?: string, zip_code?: string, address?: string}  $recipientData
      * @param  array{type?: string, code?: string, name?: string, address?: string}  $storeData
      * @return array<string, mixed>
      */
@@ -149,6 +149,7 @@ class OrderService
             'shipping_method' => $order->shipping_method,
             'recipient_name' => $order->recipient_name,
             'recipient_phone' => $order->recipient_phone,
+            'recipient_zip_code' => $order->recipient_zip_code,
             'recipient_address' => $order->recipient_address,
             'store_type' => $order->store_type,
             'store_code' => $order->store_code,
@@ -171,7 +172,7 @@ class OrderService
     }
 
     /**
-     * @param  array{name?: string, phone?: string, address?: string}  $recipientData
+     * @param  array{name?: string, phone?: string, zip_code?: string, address?: string}  $recipientData
      * @param  array{type?: string, code?: string, name?: string, address?: string}  $storeData
      * @return array<string, mixed>
      */
@@ -274,6 +275,7 @@ class OrderService
                     'shipping_method' => $shippingMethod,
                     'recipient_name' => $recipientData['name'] ?? null,
                     'recipient_phone' => $recipientData['phone'] ?? null,
+                    'recipient_zip_code' => $recipientData['zip_code'] ?? null,
                     'recipient_address' => $recipientData['address'] ?? null,
                     'store_type' => $storeData['type'] ?? null,
                     'store_code' => $storeData['code'] ?? null,
