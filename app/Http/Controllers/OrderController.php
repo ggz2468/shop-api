@@ -47,6 +47,22 @@ class OrderController extends Controller
                 'integer',
                 Rule::in(array_map(fn (ShippingMethod $shippingMethod): int => $shippingMethod->value, ShippingMethod::cases())),
             ],
+            'recipient_name' => [
+                'required',
+                'string',
+                'max:50',
+            ],
+            'recipient_phone' => [
+                'required',
+                'string',
+                'max:20',
+            ],
+            'recipient_address' => [
+                Rule::requiredIf(fn (): bool => (int) $request->input('shipping_method') === ShippingMethod::HOME_DELIVERY->value),
+                'nullable',
+                'string',
+                'max:500',
+            ],
             'store_type' => [
                 Rule::requiredIf(fn (): bool => (int) $request->input('shipping_method') === ShippingMethod::CONVENIENCE_STORE->value),
                 'nullable',
@@ -74,14 +90,21 @@ class OrderController extends Controller
         ]);
 
         $result = $this->orderService->storeOrder(
-            $request->user()->id,
-            $idempotencyKey,
-            $validated['payment_method'],
-            $validated['shipping_method'],
-            $validated['store_code'] ?? null,
-            $validated['store_type'] ?? null,
-            $validated['store_name'] ?? null,
-            $validated['store_address'] ?? null,
+            memberId: $request->user()->id,
+            idempotencyKey: $idempotencyKey,
+            paymentMethod: $validated['payment_method'],
+            shippingMethod: $validated['shipping_method'],
+            recipientData: [
+                'name' => $validated['recipient_name'] ?? null,
+                'phone' => $validated['recipient_phone'] ?? null,
+                'address' => $validated['recipient_address'] ?? null,
+            ],
+            storeData: [
+                'code' => $validated['store_code'] ?? null,
+                'type' => $validated['store_type'] ?? null,
+                'name' => $validated['store_name'] ?? null,
+                'address' => $validated['store_address'] ?? null,
+            ],
         );
 
         $response = [

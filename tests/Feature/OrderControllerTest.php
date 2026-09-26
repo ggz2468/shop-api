@@ -187,6 +187,76 @@ class OrderControllerTest extends TestCase
     }
 
     /**
+     * 建立訂單: 必須提供收件人姓名與電話，宅配另需提供收件地址。
+     */
+    public function test_store_returns_422_when_required_recipient_information_is_missing(): void
+    {
+        $member = Member::factory()->create();
+        Sanctum::actingAs($member);
+
+        $orderService = Mockery::mock(OrderService::class);
+        $orderService->shouldReceive('storeOrder')->never();
+
+        $this->app->instance(OrderService::class, $orderService);
+
+        $response = $this->postJson('/api/orders', [
+            'payment_method' => PaymentMethod::CREDIT_CARD->value,
+            'shipping_method' => ShippingMethod::HOME_DELIVERY->value,
+        ], [
+            'Idempotency-Key' => '01J3QS2AJMZV09DNXQ2EE4NM2E',
+        ]);
+
+        $response->assertStatus(422)
+            ->assertJsonValidationErrors(['recipient_name', 'recipient_phone', 'recipient_address']);
+    }
+
+    /**
+     * 建立訂單: 超商取貨不需提供收件地址。
+     */
+    public function test_store_allows_convenience_store_shipping_without_recipient_address(): void
+    {
+        $member = Member::factory()->create();
+        Sanctum::actingAs($member);
+        $idempotencyKey = '01J3QS2AJMZV09DNXQ2EE4NM2C';
+
+        $orderService = Mockery::mock(OrderService::class);
+        $orderService->shouldReceive('storeOrder')
+            ->once()
+            ->with($member->id, $idempotencyKey, PaymentMethod::CREDIT_CARD->value, ShippingMethod::CONVENIENCE_STORE->value, [
+                'name' => '王小明',
+                'phone' => '0912345678',
+                'address' => null,
+            ], [
+                'code' => 'STORE001',
+                'type' => StoreType::UNIMART->value,
+                'name' => '測試門市',
+                'address' => '台北市信義區測試路 1 號',
+            ])
+            ->andReturn([
+                'status' => 201,
+                'message' => '訂單已建立。',
+            ]);
+
+        $this->app->instance(OrderService::class, $orderService);
+
+        $response = $this->postJson('/api/orders', [
+            'payment_method' => PaymentMethod::CREDIT_CARD->value,
+            'shipping_method' => ShippingMethod::CONVENIENCE_STORE->value,
+            'recipient_name' => '王小明',
+            'recipient_phone' => '0912345678',
+            'store_type' => StoreType::UNIMART->value,
+            'store_code' => 'STORE001',
+            'store_name' => '測試門市',
+            'store_address' => '台北市信義區測試路 1 號',
+        ], [
+            'Idempotency-Key' => $idempotencyKey,
+        ]);
+
+        $response->assertStatus(201)
+            ->assertJsonPath('message', '訂單已建立。');
+    }
+
+    /**
      * 建立訂單: 超商取貨必須提供門市資訊。
      */
     public function test_store_returns_422_when_store_information_is_missing_for_convenience_store_shipping(): void
@@ -202,6 +272,8 @@ class OrderControllerTest extends TestCase
         $response = $this->postJson('/api/orders', [
             'payment_method' => PaymentMethod::CREDIT_CARD->value,
             'shipping_method' => ShippingMethod::CONVENIENCE_STORE->value,
+            'recipient_name' => '王小明',
+            'recipient_phone' => '0912345678',
         ], [
             'Idempotency-Key' => '01J3QS2AJMZV09DNXQ2EE4NM2E',
         ]);
@@ -226,6 +298,8 @@ class OrderControllerTest extends TestCase
         $response = $this->postJson('/api/orders', [
             'payment_method' => PaymentMethod::CREDIT_CARD->value,
             'shipping_method' => ShippingMethod::CONVENIENCE_STORE->value,
+            'recipient_name' => '王小明',
+            'recipient_phone' => '0912345678',
             'store_type' => 'UNKNOWN',
             'store_code' => 'STORE001',
             'store_name' => '測試門市',
@@ -250,7 +324,16 @@ class OrderControllerTest extends TestCase
         $orderService = Mockery::mock(OrderService::class);
         $orderService->shouldReceive('storeOrder')
             ->once()
-            ->with($member->id, $idempotencyKey, PaymentMethod::CREDIT_CARD->value, ShippingMethod::HOME_DELIVERY->value, null, null, null, null)
+            ->with($member->id, $idempotencyKey, PaymentMethod::CREDIT_CARD->value, ShippingMethod::HOME_DELIVERY->value, [
+                'name' => '王小明',
+                'phone' => '0912345678',
+                'address' => '台北市信義區測試路 1 號',
+            ], [
+                'code' => null,
+                'type' => null,
+                'name' => null,
+                'address' => null,
+            ])
             ->andReturn([
                 'status' => 201,
                 'message' => '訂單已建立。',
@@ -260,6 +343,9 @@ class OrderControllerTest extends TestCase
                     'status' => 3,
                     'payment_method' => PaymentMethod::CREDIT_CARD->value,
                     'shipping_method' => ShippingMethod::HOME_DELIVERY->value,
+                    'recipient_name' => '王小明',
+                    'recipient_phone' => '0912345678',
+                    'recipient_address' => '台北市信義區測試路 1 號',
                     'store_type' => null,
                     'store_code' => null,
                     'store_name' => null,
@@ -284,6 +370,9 @@ class OrderControllerTest extends TestCase
         $response = $this->postJson('/api/orders', [
             'payment_method' => PaymentMethod::CREDIT_CARD->value,
             'shipping_method' => ShippingMethod::HOME_DELIVERY->value,
+            'recipient_name' => '王小明',
+            'recipient_phone' => '0912345678',
+            'recipient_address' => '台北市信義區測試路 1 號',
         ], [
             'Idempotency-Key' => $idempotencyKey,
         ]);
@@ -307,7 +396,16 @@ class OrderControllerTest extends TestCase
         $orderService = Mockery::mock(OrderService::class);
         $orderService->shouldReceive('storeOrder')
             ->once()
-            ->with($member->id, $idempotencyKey, PaymentMethod::CREDIT_CARD->value, ShippingMethod::HOME_DELIVERY->value, null, null, null, null)
+            ->with($member->id, $idempotencyKey, PaymentMethod::CREDIT_CARD->value, ShippingMethod::HOME_DELIVERY->value, [
+                'name' => '王小明',
+                'phone' => '0912345678',
+                'address' => '台北市信義區測試路 1 號',
+            ], [
+                'code' => null,
+                'type' => null,
+                'name' => null,
+                'address' => null,
+            ])
             ->andReturn([
                 'status' => 200,
                 'message' => '訂單已存在。',
@@ -317,6 +415,9 @@ class OrderControllerTest extends TestCase
                     'status' => 3,
                     'payment_method' => PaymentMethod::CREDIT_CARD->value,
                     'shipping_method' => ShippingMethod::HOME_DELIVERY->value,
+                    'recipient_name' => '王小明',
+                    'recipient_phone' => '0912345678',
+                    'recipient_address' => '台北市信義區測試路 1 號',
                     'store_type' => null,
                     'store_code' => null,
                     'store_name' => null,
@@ -333,6 +434,9 @@ class OrderControllerTest extends TestCase
         $response = $this->postJson('/api/orders', [
             'payment_method' => PaymentMethod::CREDIT_CARD->value,
             'shipping_method' => ShippingMethod::HOME_DELIVERY->value,
+            'recipient_name' => '王小明',
+            'recipient_phone' => '0912345678',
+            'recipient_address' => '台北市信義區測試路 1 號',
         ], [
             'Idempotency-Key' => $idempotencyKey,
         ]);
@@ -367,6 +471,8 @@ class OrderControllerTest extends TestCase
         $response = $this->postJson('/api/orders', [
             'payment_method' => PaymentMethod::CREDIT_CARD->value,
             'shipping_method' => ShippingMethod::CONVENIENCE_STORE->value,
+            'recipient_name' => '王小明',
+            'recipient_phone' => '0912345678',
             'store_type' => StoreType::UNIMART->value,
             'store_code' => 'UNIMART001',
             'store_name' => '信義門市',
@@ -406,6 +512,9 @@ class OrderControllerTest extends TestCase
             'tax_amount' => 77,
             'shipping_fee' => 0,
             'shipping_method' => ShippingMethod::CONVENIENCE_STORE->value,
+            'recipient_name' => '王小明',
+            'recipient_phone' => '0912345678',
+            'recipient_address' => null,
             'store_type' => StoreType::UNIMART->value,
             'store_code' => 'UNIMART001',
             'store_name' => '信義門市',
@@ -462,6 +571,9 @@ class OrderControllerTest extends TestCase
         $response = $this->postJson('/api/orders', [
             'payment_method' => PaymentMethod::CREDIT_CARD->value,
             'shipping_method' => ShippingMethod::HOME_DELIVERY->value,
+            'recipient_name' => '王小明',
+            'recipient_phone' => '0912345678',
+            'recipient_address' => '台北市信義區測試路 1 號',
         ], [
             'Idempotency-Key' => '01J3QS2AJMZV09DNXQ2EE4NM2F',
         ]);
@@ -511,6 +623,9 @@ class OrderControllerTest extends TestCase
             $response = $this->postJson('/api/orders', [
                 'payment_method' => $paymentMethod->value,
                 'shipping_method' => ShippingMethod::HOME_DELIVERY->value,
+                'recipient_name' => '王小明',
+                'recipient_phone' => '0912345678',
+                'recipient_address' => '台北市信義區測試路 1 號',
             ], [
                 'Idempotency-Key' => $idempotencyKey,
             ]);
@@ -547,12 +662,18 @@ class OrderControllerTest extends TestCase
         $firstResponse = $this->postJson('/api/orders', [
             'payment_method' => PaymentMethod::CREDIT_CARD->value,
             'shipping_method' => ShippingMethod::HOME_DELIVERY->value,
+            'recipient_name' => '王小明',
+            'recipient_phone' => '0912345678',
+            'recipient_address' => '台北市信義區測試路 1 號',
         ], [
             'Idempotency-Key' => $idempotencyKey,
         ]);
         $secondResponse = $this->postJson('/api/orders', [
             'payment_method' => PaymentMethod::CREDIT_CARD->value,
             'shipping_method' => ShippingMethod::HOME_DELIVERY->value,
+            'recipient_name' => '王小明',
+            'recipient_phone' => '0912345678',
+            'recipient_address' => '台北市信義區測試路 1 號',
         ], [
             'Idempotency-Key' => $idempotencyKey,
         ]);
@@ -582,6 +703,9 @@ class OrderControllerTest extends TestCase
         $response = $this->postJson('/api/orders', [
             'payment_method' => PaymentMethod::CREDIT_CARD->value,
             'shipping_method' => ShippingMethod::HOME_DELIVERY->value,
+            'recipient_name' => '王小明',
+            'recipient_phone' => '0912345678',
+            'recipient_address' => '台北市信義區測試路 1 號',
         ], [
             'Idempotency-Key' => '01J3QS2AJMZV09DNXQ2EE4NM2H',
         ]);
@@ -610,6 +734,9 @@ class OrderControllerTest extends TestCase
         $response = $this->postJson('/api/orders', [
             'payment_method' => PaymentMethod::CREDIT_CARD->value,
             'shipping_method' => ShippingMethod::HOME_DELIVERY->value,
+            'recipient_name' => '王小明',
+            'recipient_phone' => '0912345678',
+            'recipient_address' => '台北市信義區測試路 1 號',
         ], [
             'Idempotency-Key' => '01J3QS2AJMZV09DNXQ2EE4NM2I',
         ]);
@@ -665,7 +792,16 @@ class OrderControllerTest extends TestCase
         $orderService = Mockery::mock(OrderService::class);
         $orderService->shouldReceive('storeOrder')
             ->times(10)
-            ->with($member->id, Mockery::type('string'), PaymentMethod::CREDIT_CARD->value, ShippingMethod::HOME_DELIVERY->value, null, null, null, null)
+            ->with($member->id, Mockery::type('string'), PaymentMethod::CREDIT_CARD->value, ShippingMethod::HOME_DELIVERY->value, [
+                'name' => '王小明',
+                'phone' => '0912345678',
+                'address' => '台北市信義區測試路 1 號',
+            ], [
+                'code' => null,
+                'type' => null,
+                'name' => null,
+                'address' => null,
+            ])
             ->andReturn([
                 'status' => 201,
                 'message' => '訂單已建立。',
@@ -677,6 +813,9 @@ class OrderControllerTest extends TestCase
             $this->postJson('/api/orders', [
                 'payment_method' => PaymentMethod::CREDIT_CARD->value,
                 'shipping_method' => ShippingMethod::HOME_DELIVERY->value,
+                'recipient_name' => '王小明',
+                'recipient_phone' => '0912345678',
+                'recipient_address' => '台北市信義區測試路 1 號',
             ], [
                 'Idempotency-Key' => sprintf('01J3QS2AJMZV09DNXQ2EE4NM%02d', $attempt),
             ])->assertStatus(201);
@@ -685,6 +824,9 @@ class OrderControllerTest extends TestCase
         $this->postJson('/api/orders', [
             'payment_method' => PaymentMethod::CREDIT_CARD->value,
             'shipping_method' => ShippingMethod::HOME_DELIVERY->value,
+            'recipient_name' => '王小明',
+            'recipient_phone' => '0912345678',
+            'recipient_address' => '台北市信義區測試路 1 號',
         ], [
             'Idempotency-Key' => '01J3QS2AJMZV09DNXQ2EE4NM99',
         ])->assertStatus(429);
@@ -699,7 +841,16 @@ class OrderControllerTest extends TestCase
         $orderService = Mockery::mock(OrderService::class);
         $orderService->shouldReceive('storeOrder')
             ->once()
-            ->with($member->id, $idempotencyKey, PaymentMethod::CREDIT_CARD->value, ShippingMethod::HOME_DELIVERY->value, null, null, null, null)
+            ->with($member->id, $idempotencyKey, PaymentMethod::CREDIT_CARD->value, ShippingMethod::HOME_DELIVERY->value, [
+                'name' => '王小明',
+                'phone' => '0912345678',
+                'address' => '台北市信義區測試路 1 號',
+            ], [
+                'code' => null,
+                'type' => null,
+                'name' => null,
+                'address' => null,
+            ])
             ->andReturn([
                 'status' => $status,
                 'message' => $message,
@@ -710,6 +861,9 @@ class OrderControllerTest extends TestCase
         $response = $this->postJson('/api/orders', [
             'payment_method' => PaymentMethod::CREDIT_CARD->value,
             'shipping_method' => ShippingMethod::HOME_DELIVERY->value,
+            'recipient_name' => '王小明',
+            'recipient_phone' => '0912345678',
+            'recipient_address' => '台北市信義區測試路 1 號',
         ], [
             'Idempotency-Key' => $idempotencyKey,
         ]);
