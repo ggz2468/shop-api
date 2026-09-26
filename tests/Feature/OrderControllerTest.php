@@ -187,7 +187,7 @@ class OrderControllerTest extends TestCase
     }
 
     /**
-     * 建立訂單: 必須提供收件人姓名與電話，宅配另需提供收件地址。
+     * 建立訂單: 必須提供收件人姓名與電話，宅配另需提供收件郵遞區號與地址。
      */
     public function test_store_returns_422_when_required_recipient_information_is_missing(): void
     {
@@ -207,7 +207,7 @@ class OrderControllerTest extends TestCase
         ]);
 
         $response->assertStatus(422)
-            ->assertJsonValidationErrors(['recipient_name', 'recipient_phone', 'recipient_address']);
+            ->assertJsonValidationErrors(['recipient_name', 'recipient_phone', 'recipient_zip_code', 'recipient_address']);
     }
 
     /**
@@ -225,6 +225,7 @@ class OrderControllerTest extends TestCase
             ->with($member->id, $idempotencyKey, PaymentMethod::CREDIT_CARD->value, ShippingMethod::CONVENIENCE_STORE->value, [
                 'name' => '王小明',
                 'phone' => '0912345678',
+                'zip_code' => null,
                 'address' => null,
             ], [
                 'code' => 'STORE001',
@@ -327,6 +328,7 @@ class OrderControllerTest extends TestCase
             ->with($member->id, $idempotencyKey, PaymentMethod::CREDIT_CARD->value, ShippingMethod::HOME_DELIVERY->value, [
                 'name' => '王小明',
                 'phone' => '0912345678',
+                'zip_code' => '100',
                 'address' => '台北市信義區測試路 1 號',
             ], [
                 'code' => null,
@@ -372,6 +374,7 @@ class OrderControllerTest extends TestCase
             'shipping_method' => ShippingMethod::HOME_DELIVERY->value,
             'recipient_name' => '王小明',
             'recipient_phone' => '0912345678',
+            'recipient_zip_code' => '100',
             'recipient_address' => '台北市信義區測試路 1 號',
         ], [
             'Idempotency-Key' => $idempotencyKey,
@@ -399,6 +402,7 @@ class OrderControllerTest extends TestCase
             ->with($member->id, $idempotencyKey, PaymentMethod::CREDIT_CARD->value, ShippingMethod::HOME_DELIVERY->value, [
                 'name' => '王小明',
                 'phone' => '0912345678',
+                'zip_code' => '100',
                 'address' => '台北市信義區測試路 1 號',
             ], [
                 'code' => null,
@@ -436,6 +440,7 @@ class OrderControllerTest extends TestCase
             'shipping_method' => ShippingMethod::HOME_DELIVERY->value,
             'recipient_name' => '王小明',
             'recipient_phone' => '0912345678',
+            'recipient_zip_code' => '100',
             'recipient_address' => '台北市信義區測試路 1 號',
         ], [
             'Idempotency-Key' => $idempotencyKey,
@@ -514,6 +519,7 @@ class OrderControllerTest extends TestCase
             'shipping_method' => ShippingMethod::CONVENIENCE_STORE->value,
             'recipient_name' => '王小明',
             'recipient_phone' => '0912345678',
+            'recipient_zip_code' => null,
             'recipient_address' => null,
             'store_type' => StoreType::UNIMART->value,
             'store_code' => 'UNIMART001',
@@ -573,6 +579,7 @@ class OrderControllerTest extends TestCase
             'shipping_method' => ShippingMethod::HOME_DELIVERY->value,
             'recipient_name' => '王小明',
             'recipient_phone' => '0912345678',
+            'recipient_zip_code' => '100',
             'recipient_address' => '台北市信義區測試路 1 號',
         ], [
             'Idempotency-Key' => '01J3QS2AJMZV09DNXQ2EE4NM2F',
@@ -625,6 +632,7 @@ class OrderControllerTest extends TestCase
                 'shipping_method' => ShippingMethod::HOME_DELIVERY->value,
                 'recipient_name' => '王小明',
                 'recipient_phone' => '0912345678',
+                'recipient_zip_code' => '100',
                 'recipient_address' => '台北市信義區測試路 1 號',
             ], [
                 'Idempotency-Key' => $idempotencyKey,
@@ -664,6 +672,7 @@ class OrderControllerTest extends TestCase
             'shipping_method' => ShippingMethod::HOME_DELIVERY->value,
             'recipient_name' => '王小明',
             'recipient_phone' => '0912345678',
+            'recipient_zip_code' => '100',
             'recipient_address' => '台北市信義區測試路 1 號',
         ], [
             'Idempotency-Key' => $idempotencyKey,
@@ -673,6 +682,7 @@ class OrderControllerTest extends TestCase
             'shipping_method' => ShippingMethod::HOME_DELIVERY->value,
             'recipient_name' => '王小明',
             'recipient_phone' => '0912345678',
+            'recipient_zip_code' => '100',
             'recipient_address' => '台北市信義區測試路 1 號',
         ], [
             'Idempotency-Key' => $idempotencyKey,
@@ -705,6 +715,7 @@ class OrderControllerTest extends TestCase
             'shipping_method' => ShippingMethod::HOME_DELIVERY->value,
             'recipient_name' => '王小明',
             'recipient_phone' => '0912345678',
+            'recipient_zip_code' => '100',
             'recipient_address' => '台北市信義區測試路 1 號',
         ], [
             'Idempotency-Key' => '01J3QS2AJMZV09DNXQ2EE4NM2H',
@@ -736,6 +747,7 @@ class OrderControllerTest extends TestCase
             'shipping_method' => ShippingMethod::HOME_DELIVERY->value,
             'recipient_name' => '王小明',
             'recipient_phone' => '0912345678',
+            'recipient_zip_code' => '100',
             'recipient_address' => '台北市信義區測試路 1 號',
         ], [
             'Idempotency-Key' => '01J3QS2AJMZV09DNXQ2EE4NM2I',
@@ -795,6 +807,7 @@ class OrderControllerTest extends TestCase
             ->with($member->id, Mockery::type('string'), PaymentMethod::CREDIT_CARD->value, ShippingMethod::HOME_DELIVERY->value, [
                 'name' => '王小明',
                 'phone' => '0912345678',
+                'zip_code' => '100',
                 'address' => '台北市信義區測試路 1 號',
             ], [
                 'code' => null,
@@ -815,6 +828,7 @@ class OrderControllerTest extends TestCase
                 'shipping_method' => ShippingMethod::HOME_DELIVERY->value,
                 'recipient_name' => '王小明',
                 'recipient_phone' => '0912345678',
+                'recipient_zip_code' => '100',
                 'recipient_address' => '台北市信義區測試路 1 號',
             ], [
                 'Idempotency-Key' => sprintf('01J3QS2AJMZV09DNXQ2EE4NM%02d', $attempt),
@@ -826,6 +840,7 @@ class OrderControllerTest extends TestCase
             'shipping_method' => ShippingMethod::HOME_DELIVERY->value,
             'recipient_name' => '王小明',
             'recipient_phone' => '0912345678',
+            'recipient_zip_code' => '100',
             'recipient_address' => '台北市信義區測試路 1 號',
         ], [
             'Idempotency-Key' => '01J3QS2AJMZV09DNXQ2EE4NM99',
@@ -844,6 +859,7 @@ class OrderControllerTest extends TestCase
             ->with($member->id, $idempotencyKey, PaymentMethod::CREDIT_CARD->value, ShippingMethod::HOME_DELIVERY->value, [
                 'name' => '王小明',
                 'phone' => '0912345678',
+                'zip_code' => '100',
                 'address' => '台北市信義區測試路 1 號',
             ], [
                 'code' => null,
@@ -863,6 +879,7 @@ class OrderControllerTest extends TestCase
             'shipping_method' => ShippingMethod::HOME_DELIVERY->value,
             'recipient_name' => '王小明',
             'recipient_phone' => '0912345678',
+            'recipient_zip_code' => '100',
             'recipient_address' => '台北市信義區測試路 1 號',
         ], [
             'Idempotency-Key' => $idempotencyKey,

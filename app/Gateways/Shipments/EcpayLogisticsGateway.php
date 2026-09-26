@@ -41,6 +41,9 @@ class EcpayLogisticsGateway implements ShipmentGateway
      *         ReceiverName: string,
      *         ReceiverCellPhone: string,
      *         ServerReplyURL: string,
+     *         SenderZipCode?: string,
+     *         SenderAddress?: string,
+     *         ReceiverZipCode?: string,
      *         ReceiverAddress?: string,
      *         ReceiverStoreID?: string,
      *         CheckMacValue: string,
@@ -74,6 +77,9 @@ class EcpayLogisticsGateway implements ShipmentGateway
         ];
         $params = array_merge($params, match ($this->resolveLogisticsType($shipment)) {
             'Home' => [
+                'SenderZipCode' => $this->requiredConfigString('services.ecpay_logistics.sender_zip_code'),
+                'SenderAddress' => $this->requiredConfigString('services.ecpay_logistics.sender_address'),
+                'ReceiverZipCode' => $this->requiredShipmentString($shipment->recipient_zip_code, 'Shipment recipient zip code is required for home delivery.'),
                 'ReceiverAddress' => $this->requiredShipmentString($shipment->recipient_address, 'Shipment recipient address is required for home delivery.'),
             ],
             'CVS' => [
@@ -127,12 +133,15 @@ class EcpayLogisticsGateway implements ShipmentGateway
         $this->requiredShipmentString($shipment->recipient_phone, 'Shipment recipient phone is not configured.');
 
         match ($shippingMethod) {
-            ShippingMethod::HOME_DELIVERY => $this->requiredShipmentString(
-                $shipment->recipient_address,
-                'Shipment recipient address is required for home delivery.',
-            ),
+            ShippingMethod::HOME_DELIVERY => $this->validateHomeDeliveryShipment($shipment),
             ShippingMethod::CONVENIENCE_STORE => $this->validateConvenienceStoreShipment($shipment),
         };
+    }
+
+    private function validateHomeDeliveryShipment(Shipment $shipment): void
+    {
+        $this->requiredShipmentString($shipment->recipient_zip_code, 'Shipment recipient zip code is required for home delivery.');
+        $this->requiredShipmentString($shipment->recipient_address, 'Shipment recipient address is required for home delivery.');
     }
 
     private function validateConvenienceStoreShipment(Shipment $shipment): void

@@ -682,13 +682,14 @@ class OrderServiceTest extends TestCase
     }
 
     /**
-     * @return array{name: string, phone: string, address: ?string}
+     * @return array{name: string, phone: string, zip_code: ?string, address: ?string}
      */
-    private function recipientData(?string $address = '台北市信義區測試路 1 號'): array
+    private function recipientData(?string $address = '台北市信義區測試路 1 號', ?string $zipCode = '100'): array
     {
         return [
             'name' => '王小明',
             'phone' => '0912345678',
+            'zip_code' => $zipCode,
             'address' => $address,
         ];
     }

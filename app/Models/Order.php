@@ -23,6 +23,7 @@ class Order extends Model
         'shipping_method',
         'recipient_name',
         'recipient_phone',
+        'recipient_zip_code',
         'recipient_address',
         'store_type',
         'store_code',

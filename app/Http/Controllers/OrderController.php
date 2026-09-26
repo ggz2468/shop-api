@@ -57,6 +57,12 @@ class OrderController extends Controller
                 'string',
                 'max:20',
             ],
+            'recipient_zip_code' => [
+                Rule::requiredIf(fn (): bool => (int) $request->input('shipping_method') === ShippingMethod::HOME_DELIVERY->value),
+                'nullable',
+                'string',
+                'max:10',
+            ],
             'recipient_address' => [
                 Rule::requiredIf(fn (): bool => (int) $request->input('shipping_method') === ShippingMethod::HOME_DELIVERY->value),
                 'nullable',
@@ -97,6 +103,7 @@ class OrderController extends Controller
             recipientData: [
                 'name' => $validated['recipient_name'] ?? null,
                 'phone' => $validated['recipient_phone'] ?? null,
+                'zip_code' => $validated['recipient_zip_code'] ?? null,
                 'address' => $validated['recipient_address'] ?? null,
             ],
             storeData: [

@@ -56,6 +56,7 @@ class CreateShipment
         $recipientData = [
             'name' => $order->recipient_name,
             'phone' => $order->recipient_phone,
+            'zip_code' => $order->recipient_zip_code,
             'address' => $order->recipient_address,
         ];
         $storeData = [
@@ -73,6 +74,7 @@ class CreateShipment
             'shipping_method' => $shippingMethod->value,
             'recipient_name' => $recipientData['name'],
             'recipient_phone' => $recipientData['phone'],
+            'recipient_zip_code' => $recipientData['zip_code'],
             'recipient_address' => $recipientData['address'],
             'store_code' => $storeData['code'],
             'store_type' => $storeData['type'],

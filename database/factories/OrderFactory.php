@@ -35,6 +35,7 @@ class OrderFactory extends Factory
             'shipping_method' => ShippingMethod::HOME_DELIVERY->value,
             'recipient_name' => $this->faker->name(),
             'recipient_phone' => $this->faker->numerify('09########'),
+            'recipient_zip_code' => $this->faker->postcode(),
             'recipient_address' => $this->faker->address(),
             'store_type' => null,
             'store_code' => null,
