@@ -121,12 +121,12 @@ jobs:
             set -e
             cd ${{ secrets.GCP_PROJECT_PATH }}
 
-            # 還原可能被本機修改或刪除的追蹤檔案，避免 git pull 因工作目錄不乾淨而中斷
-            git restore --worktree --staged .env.testing tests/k6 || true
+            # 還原可能被本機修改或刪除的追蹤檔案，避免同步遠端 main 時工作目錄不乾淨
+            git restore --worktree --staged tests/k6 || true
 
             git fetch origin main
             git checkout main
-            git pull --ff-only origin main
+            git reset --hard origin/main
 
             # 移除 k6 測試目錄
             if [ -d "tests/k6" ]; then
