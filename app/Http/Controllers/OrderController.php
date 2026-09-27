@@ -55,13 +55,13 @@ class OrderController extends Controller
             'recipient_phone' => [
                 'required',
                 'string',
-                'max:20',
+                'regex:/^09\d{8}$/',
             ],
             'recipient_zip_code' => [
                 Rule::requiredIf(fn (): bool => (int) $request->input('shipping_method') === ShippingMethod::HOME_DELIVERY->value),
                 'nullable',
                 'string',
-                'max:10',
+                'regex:/^\d{3,6}$/',
             ],
             'recipient_address' => [
                 Rule::requiredIf(fn (): bool => (int) $request->input('shipping_method') === ShippingMethod::HOME_DELIVERY->value),

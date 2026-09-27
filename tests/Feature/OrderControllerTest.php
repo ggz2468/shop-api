@@ -211,6 +211,122 @@ class OrderControllerTest extends TestCase
     }
 
     /**
+     * 建立訂單: 收件人電話必須符合手機號碼格式。
+     */
+    public function test_store_returns_422_when_recipient_phone_format_is_invalid(): void
+    {
+        $member = Member::factory()->create();
+        Sanctum::actingAs($member);
+
+        $orderService = Mockery::mock(OrderService::class);
+        $orderService->shouldReceive('storeOrder')->never();
+
+        $this->app->instance(OrderService::class, $orderService);
+
+        foreach (['091234567', '0212345678', '09123456789', '09abcdefgh'] as $recipientPhone) {
+            $response = $this->postJson('/api/orders', [
+                'payment_method' => PaymentMethod::CREDIT_CARD->value,
+                'shipping_method' => ShippingMethod::HOME_DELIVERY->value,
+                'recipient_name' => '王小明',
+                'recipient_phone' => $recipientPhone,
+                'recipient_zip_code' => '100',
+                'recipient_address' => '台北市信義區測試路 1 號',
+            ], [
+                'Idempotency-Key' => '01J3QS2AJMZV09DNXQ2EE4NM2E',
+            ]);
+
+            $response->assertStatus(422)
+                ->assertJsonValidationErrors(['recipient_phone']);
+        }
+    }
+
+    /**
+     * 建立訂單: 宅配收件郵遞區號必須為 3 至 6 碼數字。
+     */
+    public function test_store_returns_422_when_home_delivery_recipient_zip_code_format_is_invalid(): void
+    {
+        $member = Member::factory()->create();
+        Sanctum::actingAs($member);
+
+        $orderService = Mockery::mock(OrderService::class);
+        $orderService->shouldReceive('storeOrder')->never();
+
+        $this->app->instance(OrderService::class, $orderService);
+
+        foreach (['10', '1000000', 'ABC', '100-01'] as $recipientZipCode) {
+            $response = $this->postJson('/api/orders', [
+                'payment_method' => PaymentMethod::CREDIT_CARD->value,
+                'shipping_method' => ShippingMethod::HOME_DELIVERY->value,
+                'recipient_name' => '王小明',
+                'recipient_phone' => '0912345678',
+                'recipient_zip_code' => $recipientZipCode,
+                'recipient_address' => '台北市信義區測試路 1 號',
+            ], [
+                'Idempotency-Key' => '01J3QS2AJMZV09DNXQ2EE4NM2E',
+            ]);
+
+            $response->assertStatus(422)
+                ->assertJsonValidationErrors(['recipient_zip_code']);
+        }
+    }
+
+    /**
+     * 建立訂單: 宅配收件地址不可只有空白。
+     */
+    public function test_store_returns_422_when_home_delivery_recipient_address_is_blank(): void
+    {
+        $member = Member::factory()->create();
+        Sanctum::actingAs($member);
+
+        $orderService = Mockery::mock(OrderService::class);
+        $orderService->shouldReceive('storeOrder')->never();
+
+        $this->app->instance(OrderService::class, $orderService);
+
+        $response = $this->postJson('/api/orders', [
+            'payment_method' => PaymentMethod::CREDIT_CARD->value,
+            'shipping_method' => ShippingMethod::HOME_DELIVERY->value,
+            'recipient_name' => '王小明',
+            'recipient_phone' => '0912345678',
+            'recipient_zip_code' => '100',
+            'recipient_address' => '   ',
+        ], [
+            'Idempotency-Key' => '01J3QS2AJMZV09DNXQ2EE4NM2E',
+        ]);
+
+        $response->assertStatus(422)
+            ->assertJsonValidationErrors(['recipient_address']);
+    }
+
+    /**
+     * 建立訂單: 收件人姓名與宅配地址不可超過欄位長度限制。
+     */
+    public function test_store_returns_422_when_recipient_information_exceeds_max_length(): void
+    {
+        $member = Member::factory()->create();
+        Sanctum::actingAs($member);
+
+        $orderService = Mockery::mock(OrderService::class);
+        $orderService->shouldReceive('storeOrder')->never();
+
+        $this->app->instance(OrderService::class, $orderService);
+
+        $response = $this->postJson('/api/orders', [
+            'payment_method' => PaymentMethod::CREDIT_CARD->value,
+            'shipping_method' => ShippingMethod::HOME_DELIVERY->value,
+            'recipient_name' => str_repeat('王', 51),
+            'recipient_phone' => '0912345678',
+            'recipient_zip_code' => '100',
+            'recipient_address' => str_repeat('台', 501),
+        ], [
+            'Idempotency-Key' => '01J3QS2AJMZV09DNXQ2EE4NM2E',
+        ]);
+
+        $response->assertStatus(422)
+            ->assertJsonValidationErrors(['recipient_name', 'recipient_address']);
+    }
+
+    /**
      * 建立訂單: 超商取貨不需提供收件地址。
      */
     public function test_store_allows_convenience_store_shipping_without_recipient_address(): void
@@ -311,6 +427,36 @@ class OrderControllerTest extends TestCase
 
         $response->assertStatus(422)
             ->assertJsonValidationErrors(['store_type']);
+    }
+
+    /**
+     * 建立訂單: 超商門市資訊不可超過欄位長度限制。
+     */
+    public function test_store_returns_422_when_store_information_exceeds_max_length(): void
+    {
+        $member = Member::factory()->create();
+        Sanctum::actingAs($member);
+
+        $orderService = Mockery::mock(OrderService::class);
+        $orderService->shouldReceive('storeOrder')->never();
+
+        $this->app->instance(OrderService::class, $orderService);
+
+        $response = $this->postJson('/api/orders', [
+            'payment_method' => PaymentMethod::CREDIT_CARD->value,
+            'shipping_method' => ShippingMethod::CONVENIENCE_STORE->value,
+            'recipient_name' => '王小明',
+            'recipient_phone' => '0912345678',
+            'store_type' => StoreType::UNIMART->value,
+            'store_code' => str_repeat('S', 33),
+            'store_name' => str_repeat('店', 51),
+            'store_address' => str_repeat('台', 501),
+        ], [
+            'Idempotency-Key' => '01J3QS2AJMZV09DNXQ2EE4NM2E',
+        ]);
+
+        $response->assertStatus(422)
+            ->assertJsonValidationErrors(['store_code', 'store_name', 'store_address']);
     }
 
     /**
