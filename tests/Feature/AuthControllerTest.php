@@ -405,8 +405,8 @@ class AuthControllerTest extends TestCase
     private function statefulApiHeaders(): array
     {
         return [
-            'Origin' => 'http://localhost',
-            'Referer' => 'http://localhost',
+            'Origin' => 'http://shop.test',
+            'Referer' => 'http://shop.test',
         ];
     }
 
