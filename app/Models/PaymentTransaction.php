@@ -22,8 +22,10 @@ class PaymentTransaction extends Model
         'request_payload',
         'checkout_payload',
         'response_payload',
+        'expires_at',
         'paid_at',
         'failed_at',
+        'canceled_at',
         'refunded_at',
     ];
 
@@ -36,8 +38,10 @@ class PaymentTransaction extends Model
         'request_payload' => 'array',
         'checkout_payload' => 'array',
         'response_payload' => 'array',
+        'expires_at' => 'datetime',
         'paid_at' => 'datetime',
         'failed_at' => 'datetime',
+        'canceled_at' => 'datetime',
         'refunded_at' => 'datetime',
     ];
 

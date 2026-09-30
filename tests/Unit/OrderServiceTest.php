@@ -26,6 +26,7 @@ use Illuminate\Contracts\Events\Dispatcher;
 use Illuminate\Database\ConnectionInterface;
 use Illuminate\Database\QueryException;
 use Illuminate\Foundation\Testing\RefreshDatabase;
+use Illuminate\Support\Carbon;
 use Illuminate\Support\Facades\Event;
 use Mockery;
 use Psr\Log\LoggerInterface;
@@ -49,85 +50,92 @@ class OrderServiceTest extends TestCase
     public function test_store_order_creates_order_details_decrements_stock_clears_cart_and_dispatches_event(): void
     {
         Event::fake([OrderCreated::class]);
+        Carbon::setTestNow('2026-10-01 12:34:56');
 
-        $member = Member::factory()->create();
-        $productVariant = $this->createProductVariant([
-            'product_name' => 'Cotton Shirt',
-            'color' => '黑',
-            'size' => 3,
-            'sku' => 'TSHIRT-BLACK-M',
-            'price' => 800,
-            'stock_quantity' => 5,
-        ]);
+        try {
+            $member = Member::factory()->create();
+            $productVariant = $this->createProductVariant([
+                'product_name' => 'Cotton Shirt',
+                'color' => '黑',
+                'size' => 3,
+                'sku' => 'TSHIRT-BLACK-M',
+                'price' => 800,
+                'stock_quantity' => 5,
+            ]);
 
-        app(CartStore::class)->storeItem($member->id, $productVariant->id, 2);
+            app(CartStore::class)->storeItem($member->id, $productVariant->id, 2);
 
-        $result = app(OrderService::class)->storeOrder(
-            memberId: $member->id,
-            idempotencyKey: '01J3QS2AJMZV09DNXQ2EE4NM2E',
-            paymentMethod: PaymentMethod::CREDIT_CARD->value,
-            shippingMethod: ShippingMethod::CONVENIENCE_STORE->value,
-            recipientData: $this->recipientData(address: null),
-            storeData: [
-                'code' => 'UNIMART001',
-                'type' => StoreType::UNIMART->value,
-                'name' => '信義門市',
-                'address' => '台北市信義區測試路 1 號',
-            ],
-        );
+            $result = app(OrderService::class)->storeOrder(
+                memberId: $member->id,
+                idempotencyKey: '01J3QS2AJMZV09DNXQ2EE4NM2E',
+                paymentMethod: PaymentMethod::CREDIT_CARD->value,
+                shippingMethod: ShippingMethod::CONVENIENCE_STORE->value,
+                recipientData: $this->recipientData(address: null),
+                storeData: [
+                    'code' => 'UNIMART001',
+                    'type' => StoreType::UNIMART->value,
+                    'name' => '信義門市',
+                    'address' => '台北市信義區測試路 1 號',
+                ],
+            );
 
-        $this->assertSame(201, $result['status']);
-        $this->assertSame('訂單已建立。', $result['message']);
-        $this->assertSame(1600, $result['data']['total_amount']);
-        $this->assertSame(77, $result['data']['tax_amount']);
-        $this->assertSame(0, $result['data']['shipping_fee']);
-        $this->assertSame(ShippingMethod::CONVENIENCE_STORE->value, $result['data']['shipping_method']);
-        $this->assertSame(StoreType::UNIMART->value, $result['data']['store_type']);
-        $this->assertSame('UNIMART001', $result['data']['store_code']);
-        $this->assertSame('信義門市', $result['data']['store_name']);
-        $this->assertSame('台北市信義區測試路 1 號', $result['data']['store_address']);
-        $this->assertSame(Status::STOCKING->value, $result['data']['status']);
-        $this->assertSame(PaymentStatus::UNPAID->value, $result['data']['payment_status']);
-        $this->assertSame([
-            'product_variant_id' => $productVariant->id,
-            'product_name' => 'Cotton Shirt',
-            'product_sku' => 'TSHIRT-BLACK-M',
-            'product_color' => '黑',
-            'product_size' => 3,
-            'product_price' => 800,
-            'quantity' => 2,
-            'subtotal' => 1600,
-        ], $result['data']['items'][0]);
-        $this->assertSame(StoreType::UNIMART->value, $result['data']['store_type']);
-        $this->assertSame('信義門市', $result['data']['store_name']);
-        $this->assertSame('台北市信義區測試路 1 號', $result['data']['store_address']);
+            $this->assertSame(201, $result['status']);
+            $this->assertSame('訂單已建立。', $result['message']);
+            $this->assertMatchesRegularExpression('/^ORD20261001[0-9A-Z]{6}$/', $result['data']['number']);
+            $this->assertSame(1600, $result['data']['total_amount']);
+            $this->assertSame(77, $result['data']['tax_amount']);
+            $this->assertSame(0, $result['data']['shipping_fee']);
+            $this->assertSame(ShippingMethod::CONVENIENCE_STORE->value, $result['data']['shipping_method']);
+            $this->assertSame(StoreType::UNIMART->value, $result['data']['store_type']);
+            $this->assertSame('UNIMART001', $result['data']['store_code']);
+            $this->assertSame('信義門市', $result['data']['store_name']);
+            $this->assertSame('台北市信義區測試路 1 號', $result['data']['store_address']);
+            $this->assertSame(Status::STOCKING->value, $result['data']['status']);
+            $this->assertSame(PaymentStatus::UNPAID->value, $result['data']['payment_status']);
+            $this->assertSame([
+                'product_variant_id' => $productVariant->id,
+                'product_name' => 'Cotton Shirt',
+                'product_sku' => 'TSHIRT-BLACK-M',
+                'product_color' => '黑',
+                'product_size' => 3,
+                'product_price' => 800,
+                'quantity' => 2,
+                'subtotal' => 1600,
+            ], $result['data']['items'][0]);
+            $this->assertSame(StoreType::UNIMART->value, $result['data']['store_type']);
+            $this->assertSame('信義門市', $result['data']['store_name']);
+            $this->assertSame('台北市信義區測試路 1 號', $result['data']['store_address']);
 
-        $orderId = $result['data']['id'];
-        $this->assertDatabaseHas('orders', [
-            'id' => $orderId,
-            'member_id' => $member->id,
-            'idempotency_key' => '01J3QS2AJMZV09DNXQ2EE4NM2E',
-            'total_amount' => 1600,
-            'tax_amount' => 77,
-            'shipping_fee' => 0,
-            'shipping_method' => ShippingMethod::CONVENIENCE_STORE->value,
-            'store_type' => StoreType::UNIMART->value,
-            'store_code' => 'UNIMART001',
-            'store_name' => '信義門市',
-            'store_address' => '台北市信義區測試路 1 號',
-            'payment_method' => PaymentMethod::CREDIT_CARD->value,
-            'payment_status' => PaymentStatus::UNPAID->value,
-        ]);
-        $this->assertDatabaseHas('order_details', [
-            'order_id' => $orderId,
-            'product_variant_id' => $productVariant->id,
-            'product_sku' => 'TSHIRT-BLACK-M',
-            'quantity' => 2,
-            'subtotal' => 1600,
-        ]);
-        $this->assertSame(3, $productVariant->refresh()->stock_quantity);
-        $this->assertSame([], app(CartStore::class)->getItems($member->id));
-        Event::assertDispatched(OrderCreated::class, fn (OrderCreated $event): bool => $event->orderId === $orderId);
+            $orderId = $result['data']['id'];
+            $this->assertDatabaseHas('orders', [
+                'id' => $orderId,
+                'member_id' => $member->id,
+                'idempotency_key' => '01J3QS2AJMZV09DNXQ2EE4NM2E',
+                'number' => $result['data']['number'],
+                'total_amount' => 1600,
+                'tax_amount' => 77,
+                'shipping_fee' => 0,
+                'shipping_method' => ShippingMethod::CONVENIENCE_STORE->value,
+                'store_type' => StoreType::UNIMART->value,
+                'store_code' => 'UNIMART001',
+                'store_name' => '信義門市',
+                'store_address' => '台北市信義區測試路 1 號',
+                'payment_method' => PaymentMethod::CREDIT_CARD->value,
+                'payment_status' => PaymentStatus::UNPAID->value,
+            ]);
+            $this->assertDatabaseHas('order_details', [
+                'order_id' => $orderId,
+                'product_variant_id' => $productVariant->id,
+                'product_sku' => 'TSHIRT-BLACK-M',
+                'quantity' => 2,
+                'subtotal' => 1600,
+            ]);
+            $this->assertSame(3, $productVariant->refresh()->stock_quantity);
+            $this->assertSame([], app(CartStore::class)->getItems($member->id));
+            Event::assertDispatched(OrderCreated::class, fn (OrderCreated $event): bool => $event->orderId === $orderId);
+        } finally {
+            Carbon::setTestNow();
+        }
     }
 
     /**

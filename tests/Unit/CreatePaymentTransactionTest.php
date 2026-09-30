@@ -16,6 +16,7 @@ use App\Repositories\PaymentTransactionRepository;
 use Illuminate\Contracts\Queue\ShouldQueue;
 use Illuminate\Database\Eloquent\ModelNotFoundException;
 use Illuminate\Foundation\Testing\RefreshDatabase;
+use Illuminate\Support\Carbon;
 use Illuminate\Support\Facades\Event;
 use Tests\TestCase;
 
@@ -37,43 +38,61 @@ class CreatePaymentTransactionTest extends TestCase
     public function test_handle_creates_payment_transaction_and_dispatches_payment_initiated(): void
     {
         Event::fake([PaymentInitiated::class]);
+        Carbon::setTestNow('2026-09-30 12:34:56');
 
-        $order = Order::factory()->create([
-            'number' => 'ORD20260905ABCDEFG',
-            'total_amount' => 1280,
-            'payment_method' => PaymentMethod::CREDIT_CARD->value,
-        ]);
+        try {
+            $order = Order::factory()->create([
+                'number' => 'ORD20260905ABCDEFG',
+                'total_amount' => 1280,
+                'payment_method' => PaymentMethod::CREDIT_CARD->value,
+            ]);
 
-        $this->makeListener()->handle(new OrderCreated($order->id));
+            $this->makeListener()->handle(new OrderCreated($order->id));
 
-        $paymentTransaction = PaymentTransaction::query()->where('order_id', $order->id)->firstOrFail();
-        $this->assertSame(Provider::ECPAY->value, $paymentTransaction->provider);
-        $this->assertSame('PAY20260905ABCDEFG', $paymentTransaction->merchant_trade_no);
-        $this->assertSame(1280, $paymentTransaction->amount);
-        $this->assertSame('TWD', $paymentTransaction->currency);
-        $this->assertSame(Status::PENDING->value, $paymentTransaction->status);
-        $this->assertSame(PaymentTransactionPaymentMethod::CREDIT_CARD->value, $paymentTransaction->payment_method);
-        $this->assertNull($paymentTransaction->request_payload);
-        $this->assertNull($paymentTransaction->checkout_payload);
-        $this->assertNull($paymentTransaction->response_payload);
-        Event::assertDispatched(PaymentInitiated::class, fn (PaymentInitiated $event): bool => $event->paymentTransactionId === $paymentTransaction->id);
+            $paymentTransaction = PaymentTransaction::query()->where('order_id', $order->id)->firstOrFail();
+            $this->assertSame(Provider::ECPAY->value, $paymentTransaction->provider);
+            $this->assertMatchesRegularExpression('/^PAY20260930[0-9A-Z]{6}$/', $paymentTransaction->merchant_trade_no);
+            $this->assertSame(1280, $paymentTransaction->amount);
+            $this->assertSame('TWD', $paymentTransaction->currency);
+            $this->assertSame(Status::PENDING->value, $paymentTransaction->status);
+            $this->assertSame(PaymentTransactionPaymentMethod::CREDIT_CARD->value, $paymentTransaction->payment_method);
+            $this->assertNull($paymentTransaction->request_payload);
+            $this->assertNull($paymentTransaction->checkout_payload);
+            $this->assertNull($paymentTransaction->response_payload);
+            Event::assertDispatched(PaymentInitiated::class, fn (PaymentInitiated $event): bool => $event->paymentTransactionId === $paymentTransaction->id);
+        } finally {
+            Carbon::setTestNow();
+        }
     }
 
     /**
-     * OrderCreated: 金流交易編號不應保留訂單編號的 ORD prefix。
+     * OrderCreated: 每筆付款交易應產生唯一的商店交易編號。
      */
-    public function test_handle_removes_order_number_prefix_when_creating_merchant_trade_no(): void
+    public function test_handle_creates_unique_merchant_trade_no_for_each_payment_transaction(): void
     {
         Event::fake([PaymentInitiated::class]);
+        Carbon::setTestNow('2026-09-30 12:34:56');
 
-        $order = Order::factory()->create([
-            'number' => 'ORD20260905A1B2C3',
-        ]);
+        try {
+            $firstOrder = Order::factory()->create();
+            $secondOrder = Order::factory()->create();
 
-        $this->makeListener()->handle(new OrderCreated($order->id));
+            $this->makeListener()->handle(new OrderCreated($firstOrder->id));
+            $this->makeListener()->handle(new OrderCreated($secondOrder->id));
 
-        $paymentTransaction = PaymentTransaction::query()->where('order_id', $order->id)->firstOrFail();
-        $this->assertSame('PAY20260905A1B2C3', $paymentTransaction->merchant_trade_no);
+            $merchantTradeNos = PaymentTransaction::query()
+                ->whereIn('order_id', [$firstOrder->id, $secondOrder->id])
+                ->pluck('merchant_trade_no')
+                ->all();
+
+            $this->assertCount(2, $merchantTradeNos);
+            $this->assertCount(2, array_unique($merchantTradeNos));
+            foreach ($merchantTradeNos as $merchantTradeNo) {
+                $this->assertMatchesRegularExpression('/^PAY20260930[0-9A-Z]{6}$/', $merchantTradeNo);
+            }
+        } finally {
+            Carbon::setTestNow();
+        }
     }
 
     /**

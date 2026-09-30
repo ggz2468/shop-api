@@ -108,9 +108,23 @@ class OrderService
      */
     private function generateOrderNumber(): string
     {
-        $randomString = substr(str_shuffle('0123456789ABCDEFGHIJKLMNOPQRSTUVWXYZ'), 0, 6);
+        return sprintf(
+            'ORD%s%s',
+            now()->format('Ymd'),
+            $this->randomUppercaseAlphanumeric(6),
+        );
+    }
 
-        return sprintf('ORD%s%s', now()->format('Ymd'), $randomString);
+    private function randomUppercaseAlphanumeric(int $length): string
+    {
+        $characters = '0123456789ABCDEFGHIJKLMNOPQRSTUVWXYZ';
+        $value = '';
+
+        for ($index = 0; $index < $length; $index++) {
+            $value .= $characters[random_int(0, strlen($characters) - 1)];
+        }
+
+        return $value;
     }
 
     /**

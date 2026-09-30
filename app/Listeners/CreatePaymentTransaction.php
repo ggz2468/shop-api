@@ -42,10 +42,12 @@ class CreatePaymentTransaction
             return;
         }
 
+        $provider = $this->resolveDefaultProvider();
+
         $paymentTransaction = $this->paymentTransactionRepository->create([
             'order_id' => $order->id,
-            'provider' => $this->resolveDefaultProvider()->value,
-            'merchant_trade_no' => $this->makeMerchantTradeNo($order->number),
+            'provider' => $provider->value,
+            'merchant_trade_no' => $this->makeMerchantTradeNo($provider),
             'amount' => $order->total_amount,
             'currency' => 'TWD',
             'status' => Status::PENDING->value,
@@ -79,12 +81,35 @@ class CreatePaymentTransaction
         };
     }
 
-    private function makeMerchantTradeNo(string $orderNumber): string
+    private function makeMerchantTradeNo(Provider $provider): string
     {
-        $orderNumberSuffix = str_starts_with($orderNumber, 'ORD')
-            ? substr($orderNumber, 3)
-            : $orderNumber;
+        for ($attempt = 0; $attempt < 10; $attempt++) {
+            $merchantTradeNo = sprintf(
+                'PAY%s%s',
+                now()->format('Ymd'),
+                $this->randomUppercaseAlphanumeric(6),
+            );
 
-        return substr('PAY'.$orderNumberSuffix, 0, 64);
+            if ($this->paymentTransactionRepository->doesNotExist([
+                ['provider', $provider->value],
+                ['merchant_trade_no', $merchantTradeNo],
+            ])) {
+                return $merchantTradeNo;
+            }
+        }
+
+        throw new RuntimeException('Unable to generate unique merchant trade no.');
+    }
+
+    private function randomUppercaseAlphanumeric(int $length): string
+    {
+        $characters = '0123456789ABCDEFGHIJKLMNOPQRSTUVWXYZ';
+        $value = '';
+
+        for ($index = 0; $index < $length; $index++) {
+            $value .= $characters[random_int(0, strlen($characters) - 1)];
+        }
+
+        return $value;
     }
 }
