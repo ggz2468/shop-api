@@ -22,6 +22,12 @@ git clone git@github.com:ggz2468/shop-api.git
 ```bash
 cd laradock/
 ```
+請先在 Host 的 hosts 檔案加入下列對應，讓瀏覽器可透過 Nginx 使用 `shop.test`：
+
+```text
+127.0.0.1 shop.test
+```
+
 在這個目錄下，請建立或編輯以下檔案；如果檔案已存在，可以直接修改，不需要先 `touch`。
 
 #### laradock/workspace/crontab/laradock
@@ -53,7 +59,7 @@ server {
     listen 80;
     listen [::]:80;
 
-    server_name localhost shop.test;
+    server_name shop.test;
     root /var/www/shop-api/public;
     index index.php index.html;
 
@@ -110,7 +116,7 @@ server {
     listen 8888;
     listen [::]:8888;
 
-    server_name localhost;
+    server_name shop.test;
     root /var/www/shop-api/public;
     index index.php index.html;
 
@@ -163,36 +169,42 @@ server {
 ```bash
 docker compose up -d --force-recreate nginx mysql redis workspace php-worker
 ```
-3. 進入 Workspace 容器內
+3. 啟動前端專案，讓 Nginx 可將 `http://shop.test/` 的非 API 請求轉送到 Vite 開發伺服器。
+```bash
+cd /var/www/shop-web
+npm install
+npm run dev
+```
+4. 進入 Workspace 容器內
 ```bash
 docker compose exec --user=laradock workspace bash
 ```
-4. 切換至專案目錄
+5. 切換至專案目錄
 ```bash
 cd /var/www/shop-api
 ```
-5. 安裝必要套件並建立環境檔案
+6. 安裝必要套件並建立環境檔案
 ```bash
 composer install
 cp .env.example .env
 cp .env.performance.example .env.performance
 cp .env.testing.example .env.testing
 ```
-6. 初始化應用程式
+7. 初始化應用程式
 ```bash
 php artisan key:generate
 php artisan migrate --seed
 ```
-7. 產生 `.env.performance` 與 `.env.testing` 的 APP_KEY，並分別貼回對應檔案中
+8. 產生 `.env.performance` 與 `.env.testing` 的 APP_KEY，並分別貼回對應檔案中
 ```bash
 php artisan key:generate --show --env=performance
 php artisan key:generate --show --env=testing
 ```
-8. 執行 product_view_counts 資料表的 Partition 維護
+9. 執行 product_view_counts 資料表的 Partition 維護
 ```bash
 php artisan app:maintain-product-view-counts-partitions
 ```
-9. 建立 storage 軟連結
+10. 建立 storage 軟連結
 ```bash
 php artisan storage:link
 ```
@@ -242,13 +254,13 @@ docker compose exec --user=laradock workspace bash -lc 'cd /var/www/shop-api && 
 3. 執行 k6 壓測腳本（請先確認執行環境已安裝 k6 CLI）：
 
 ```bash
-BASE_URL=http://localhost:8888 TEST_DURATION=2m k6 run {SCRIPT_PATH}
+BASE_URL=http://shop.test:8888 TEST_DURATION=2m k6 run {SCRIPT_PATH}
 ```
 
 4. 若要模擬吞吐量超過限制的情境，可加上：
 
 ```bash
-ALLOW_THROTTLE=true TARGET_RPS=5 BASE_URL=http://localhost:8888 TEST_DURATION=2m k6 run {SCRIPT_PATH}
+ALLOW_THROTTLE=true TARGET_RPS=5 BASE_URL=http://shop.test:8888 TEST_DURATION=2m k6 run {SCRIPT_PATH}
 ```
 
 5. 壓測完成後清理資料：
@@ -262,4 +274,4 @@ docker compose exec --user=laradock workspace bash -lc 'cd /var/www/shop-api && 
 GitHub Actions 會在 `main` 分支的推送與 Pull Request 時執行 Unit / Feature Tests，並產生 coverage 給 SonarQube 使用。
 
 ### API 入口網址
-<a href="http://localhost/api">http://localhost/api</a>
+<a href="http://shop.test/api">http://shop.test/api</a>
