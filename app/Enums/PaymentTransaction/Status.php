@@ -33,4 +33,9 @@ enum Status: int
      * 已退款
      */
     case REFUNDED = 6;
+
+    /**
+     * 已過期
+     */
+    case EXPIRED = 7;
 }

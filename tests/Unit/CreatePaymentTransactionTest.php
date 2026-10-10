@@ -11,9 +11,10 @@ use App\Events\PaymentInitiated;
 use App\Listeners\CreatePaymentTransaction;
 use App\Models\Order;
 use App\Models\PaymentTransaction;
-use App\Repositories\OrderRepository;
 use App\Repositories\PaymentTransactionRepository;
+use App\Services\PaymentTransactionService;
 use Illuminate\Contracts\Queue\ShouldQueue;
+use Illuminate\Database\ConnectionInterface;
 use Illuminate\Database\Eloquent\ModelNotFoundException;
 use Illuminate\Foundation\Testing\RefreshDatabase;
 use Illuminate\Support\Carbon;
@@ -156,10 +157,10 @@ class CreatePaymentTransactionTest extends TestCase
     private function makeListener(): CreatePaymentTransaction
     {
         return new CreatePaymentTransaction(
-            new OrderRepository,
+            app(PaymentTransactionService::class),
             new PaymentTransactionRepository,
+            app(ConnectionInterface::class),
             app('events'),
-            app('config'),
         );
     }
 }
