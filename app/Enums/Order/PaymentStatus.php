@@ -28,4 +28,15 @@ enum PaymentStatus: int
      * 已退款
      */
     case REFUNDED = 5;
+
+    public function label(): string
+    {
+        return match ($this) {
+            self::UNPAID => '未付款',
+            self::PENDING => '付款處理中',
+            self::PAID => '已付款',
+            self::FAILED => '付款失敗',
+            self::REFUNDED => '已退款',
+        };
+    }
 }

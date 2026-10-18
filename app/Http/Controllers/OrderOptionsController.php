@@ -3,19 +3,31 @@
 namespace App\Http\Controllers;
 
 use App\Enums\Order\PaymentMethod;
+use App\Enums\Order\PaymentStatus;
 use App\Enums\Order\ShippingMethod;
+use App\Enums\Order\Status;
 use App\Enums\Order\StoreType;
 use Illuminate\Http\JsonResponse;
 
 class OrderOptionsController extends Controller
 {
     /**
-     * 提供建立訂單所需的付款、配送與超商選項。
+     * 提供訂單相關選項與狀態字典。
      */
     public function __invoke(): JsonResponse
     {
         return response()->json([
             'data' => [
+                'order_statuses' => array_map(fn (Status $status): array => [
+                    'value' => $status->value,
+                    'code' => $status->name,
+                    'label' => $status->label(),
+                ], Status::cases()),
+                'payment_statuses' => array_map(fn (PaymentStatus $status): array => [
+                    'value' => $status->value,
+                    'code' => $status->name,
+                    'label' => $status->label(),
+                ], PaymentStatus::cases()),
                 'payment_methods' => array_map(fn (PaymentMethod $paymentMethod): array => [
                     'value' => $paymentMethod->value,
                     'code' => $paymentMethod->name,

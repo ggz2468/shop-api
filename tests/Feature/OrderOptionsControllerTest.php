@@ -19,6 +19,20 @@ class OrderOptionsControllerTest extends TestCase
         $response->assertOk()
             ->assertExactJson([
                 'data' => [
+                    'order_statuses' => [
+                        ['value' => 1, 'code' => 'CANCELED', 'label' => '已取消'],
+                        ['value' => 2, 'code' => 'COMPLETED', 'label' => '已完成'],
+                        ['value' => 3, 'code' => 'STOCKING', 'label' => '產品備貨中'],
+                        ['value' => 4, 'code' => 'DELIVERING', 'label' => '產品配送中'],
+                        ['value' => 5, 'code' => 'DELIVERED', 'label' => '產品已送達'],
+                    ],
+                    'payment_statuses' => [
+                        ['value' => 1, 'code' => 'UNPAID', 'label' => '未付款'],
+                        ['value' => 2, 'code' => 'PENDING', 'label' => '付款處理中'],
+                        ['value' => 3, 'code' => 'PAID', 'label' => '已付款'],
+                        ['value' => 4, 'code' => 'FAILED', 'label' => '付款失敗'],
+                        ['value' => 5, 'code' => 'REFUNDED', 'label' => '已退款'],
+                    ],
                     'payment_methods' => [
                         [
                             'value' => PaymentMethod::CREDIT_CARD->value,

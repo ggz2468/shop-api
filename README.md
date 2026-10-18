@@ -3,6 +3,10 @@
 ### 成果網站
 <a href="https://chun-hung.idv.tw" target="_blank">自製電子商務網站</a>
 
+### 訂單狀態字典
+`GET /api/orders/options` 提供 `order_statuses` 與 `payment_statuses`，每個項目包含 `value`、`code`、`label`。
+`payment_statuses` 代表訂單付款狀態，不是付款交易狀態。訂單列表仍回傳 Enum 整數值，前端透過字典顯示中文。
+
 ### 開發環境
 1. Linux(Debian GNU/Linux 12)
 2. Nginx 1.29.8
