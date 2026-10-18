@@ -13,23 +13,493 @@ use App\Enums\PaymentTransaction\Status as PaymentTransactionStatus;
 use App\Events\OrderCreated;
 use App\Models\Member;
 use App\Models\Order;
+use App\Models\OrderDetail;
 use App\Models\PaymentTransaction;
 use App\Models\Product;
 use App\Models\ProductSpec;
 use App\Models\ProductVariant;
+use App\Models\Shipment;
 use App\Notifications\OrderCreatedNotification;
+use App\Repositories\OrderRepository;
 use App\Services\OrderService;
 use App\Stores\CartStore;
+use Illuminate\Database\QueryException;
 use Illuminate\Foundation\Testing\RefreshDatabase;
+use Illuminate\Support\Facades\DB;
 use Illuminate\Support\Facades\Event;
 use Illuminate\Support\Facades\Notification;
 use Laravel\Sanctum\Sanctum;
 use Mockery;
+use PHPUnit\Framework\Attributes\DataProvider;
 use Tests\TestCase;
 
 class OrderControllerTest extends TestCase
 {
     use RefreshDatabase;
+
+    /**
+     * 訂單列表: 未驗證的訪客應收到 401，無法查詢會員訂單。
+     */
+    public function test_guest_cannot_list_orders(): void
+    {
+        $this->getJson('/api/orders')->assertUnauthorized();
+    }
+
+    /**
+     * 訂單列表: 查詢失敗時應回傳 500，不可偽裝成空列表，且關閉 debug 時不得洩漏 SQL 或內部錯誤。
+     */
+    public function test_index_returns_a_generic_500_response_when_the_order_query_fails(): void
+    {
+        config()->set('app.debug', false);
+        $member = Member::factory()->create();
+        Sanctum::actingAs($member);
+        Order::factory()->for($member)->create();
+
+        $exception = new QueryException(
+            'mysql',
+            'select * from orders where member_id = ?',
+            [$member->id],
+            new \RuntimeException('Internal database connection failure'),
+        );
+        $orderRepository = Mockery::mock(OrderRepository::class);
+        $orderRepository->shouldReceive('getOrders')
+            ->once()
+            ->with($member->id, 2, 3)
+            ->andThrow($exception);
+        $this->app->instance(OrderRepository::class, $orderRepository);
+
+        $this->getJson('/api/orders?row_counts_per_page=2&page=3')
+            ->assertInternalServerError()
+            ->assertExactJson([
+                'message' => 'Server Error',
+            ]);
+    }
+
+    /**
+     * 訂單列表: 僅公開九個摘要欄位並保留型別，避免洩漏個資或金流資料及因多筆關聯產生重複訂單。
+     */
+    public function test_index_returns_only_the_nine_order_summary_fields_with_original_types(): void
+    {
+        $member = Member::factory()->create();
+        Sanctum::actingAs($member);
+        $order = Order::factory()->for($member)->create([
+            'number' => 'ORD20261012AB12CD',
+            'total_amount' => 1280,
+            'status' => Status::STOCKING->value,
+            'payment_status' => PaymentStatus::UNPAID->value,
+            'payment_method' => PaymentMethod::CREDIT_CARD->value,
+            'shipping_method' => ShippingMethod::HOME_DELIVERY->value,
+            'created_at' => '2026-10-12 13:30:00',
+        ]);
+        OrderDetail::factory()->for($order)->count(2)->create(['quantity' => 3]);
+        PaymentTransaction::factory()->for($order)->count(2)->create();
+        Shipment::factory()->for($order)->count(2)->create();
+
+        $response = $this->getJson('/api/orders');
+
+        $expected = [
+            'id' => $order->id,
+            'number' => 'ORD20261012AB12CD',
+            'created_at' => $order->created_at->toISOString(),
+            'total_amount' => 1280,
+            'status' => Status::STOCKING->value,
+            'payment_status' => PaymentStatus::UNPAID->value,
+            'payment_method' => PaymentMethod::CREDIT_CARD->value,
+            'shipping_method' => ShippingMethod::HOME_DELIVERY->value,
+            'item_quantity' => 6,
+        ];
+
+        $response->assertOk()
+            ->assertJsonCount(1, 'data')
+            ->assertJsonPath('meta.total', 1);
+        $this->assertEqualsCanonicalizing(array_keys($expected), array_keys($response->json('data.0')));
+
+        foreach ($expected as $field => $value) {
+            $response->assertJsonPath("data.0.{$field}", $value);
+        }
+    }
+
+    /**
+     * 訂單列表: 資料與總筆數皆以登入會員為準，不可信任 client 傳入的 member_id。
+     */
+    public function test_index_scopes_both_orders_and_pagination_totals_to_the_authenticated_member(): void
+    {
+        $member = Member::factory()->create();
+        $otherMember = Member::factory()->create();
+        $orders = Order::factory()->for($member)->count(3)->create([
+            'created_at' => '2026-10-10 12:00:00',
+        ]);
+        Order::factory()->for($otherMember)->count(5)->create([
+            'created_at' => '2026-10-12 12:00:00',
+        ]);
+        Sanctum::actingAs($member);
+
+        $response = $this->getJson("/api/orders?row_counts_per_page=2&member_id={$otherMember->id}");
+
+        $response->assertOk()
+            ->assertJsonCount(2, 'data')
+            ->assertJsonPath('data.0.id', $orders[2]->id)
+            ->assertJsonPath('data.1.id', $orders[1]->id)
+            ->assertJsonPath('meta.total', 3)
+            ->assertJsonPath('meta.last_page', 2);
+    }
+
+    /**
+     * 訂單列表: 會員沒有訂單時仍回傳 200 與空分頁，不可帶出其他會員的訂單。
+     */
+    public function test_index_returns_an_empty_paginated_collection_when_member_has_no_orders(): void
+    {
+        Order::factory()->count(2)->create();
+        Sanctum::actingAs(Member::factory()->create());
+
+        $this->getJson('/api/orders')->assertOk()
+            ->assertJsonPath('data', [])
+            ->assertJsonPath('meta.current_page', 1)
+            ->assertJsonPath('meta.per_page', 10)
+            ->assertJsonPath('meta.total', 0)
+            ->assertJsonPath('meta.last_page', 1)
+            ->assertJsonPath('meta.from', null)
+            ->assertJsonPath('meta.to', null)
+            ->assertJsonPath('links.prev', null)
+            ->assertJsonPath('links.next', null);
+    }
+
+    /**
+     * 訂單列表: 未指定分頁時使用每頁十筆與第一頁，並提供標準 data、links、meta 結構。
+     */
+    public function test_index_uses_ten_orders_per_page_and_page_one_by_default(): void
+    {
+        $member = Member::factory()->create();
+        Sanctum::actingAs($member);
+        Order::factory()->for($member)->count(12)->create();
+
+        $this->getJson('/api/orders')->assertOk()
+            ->assertJsonCount(10, 'data')
+            ->assertJsonPath('meta.current_page', 1)
+            ->assertJsonPath('meta.per_page', 10)
+            ->assertJsonPath('meta.total', 12)
+            ->assertJsonPath('meta.last_page', 2)
+            ->assertJsonPath('meta.from', 1)
+            ->assertJsonPath('meta.to', 10)
+            ->assertJsonStructure([
+                'data',
+                'links' => ['first', 'last', 'prev', 'next'],
+                'meta' => [
+                    'current_page', 'from', 'last_page', 'links',
+                    'path', 'per_page', 'to', 'total',
+                ],
+            ]);
+    }
+
+    /**
+     * 訂單列表: 自訂分頁應取得正確資料，分頁連結須保留每頁筆數以避免切頁時改變範圍。
+     */
+    public function test_index_returns_the_requested_page_and_links_preserve_page_size(): void
+    {
+        $member = Member::factory()->create();
+        Sanctum::actingAs($member);
+        $orders = Order::factory()->for($member)->count(7)->create([
+            'created_at' => '2026-10-12 12:00:00',
+        ]);
+
+        $response = $this->getJson('/api/orders?row_counts_per_page=2&page=2');
+
+        $response->assertOk()
+            ->assertJsonCount(2, 'data')
+            ->assertJsonPath('data.0.id', $orders[4]->id)
+            ->assertJsonPath('data.1.id', $orders[3]->id)
+            ->assertJsonPath('meta.current_page', 2)
+            ->assertJsonPath('meta.per_page', 2)
+            ->assertJsonPath('meta.total', 7)
+            ->assertJsonPath('meta.last_page', 4)
+            ->assertJsonPath('meta.from', 3)
+            ->assertJsonPath('meta.to', 4);
+
+        foreach (['first' => 1, 'last' => 4, 'prev' => 1, 'next' => 3] as $link => $page) {
+            $url = $response->json("links.{$link}");
+            $this->assertIsString($url);
+            $this->assertSame('/api/orders', parse_url($url, PHP_URL_PATH));
+            parse_str(parse_url($url, PHP_URL_QUERY), $parameters);
+            $this->assertSame((string) $page, $parameters['page']);
+            $this->assertSame('2', $parameters['row_counts_per_page']);
+        }
+    }
+
+    /**
+     * 訂單列表: 最後一頁僅回傳剩餘訂單，筆數不足一頁時不應提供下一頁連結。
+     */
+    public function test_index_returns_the_remaining_orders_on_the_last_page(): void
+    {
+        $member = Member::factory()->create();
+        Sanctum::actingAs($member);
+        $orders = Order::factory()->for($member)->count(3)->create([
+            'created_at' => '2026-10-12 12:00:00',
+        ]);
+
+        $this->getJson('/api/orders?row_counts_per_page=2&page=2')->assertOk()
+            ->assertJsonCount(1, 'data')
+            ->assertJsonPath('data.0.id', $orders[0]->id)
+            ->assertJsonPath('meta.total', 3)
+            ->assertJsonPath('meta.from', 3)
+            ->assertJsonPath('meta.to', 3)
+            ->assertJsonPath('links.next', null);
+    }
+
+    /**
+     * 訂單列表: 超出末頁時回傳空資料，但保留實際總筆數與請求頁碼供前端處理。
+     */
+    public function test_index_returns_an_empty_page_without_losing_total_when_page_is_out_of_range(): void
+    {
+        $member = Member::factory()->create();
+        Sanctum::actingAs($member);
+        Order::factory()->for($member)->count(3)->create();
+
+        $this->getJson('/api/orders?row_counts_per_page=2&page=3')->assertOk()
+            ->assertJsonPath('data', [])
+            ->assertJsonPath('meta.current_page', 3)
+            ->assertJsonPath('meta.last_page', 2)
+            ->assertJsonPath('meta.total', 3)
+            ->assertJsonPath('meta.from', null)
+            ->assertJsonPath('meta.to', null);
+    }
+
+    /**
+     * 訂單列表: 接受每頁一至三十筆的邊界值，省略或空值參數應套用預設分頁。
+     */
+    #[DataProvider('validOrderPaginationProvider')]
+    public function test_index_accepts_pagination_boundaries_and_defaults_for_omitted_or_null_parameters(
+        string $query,
+        int $pageSize,
+        int $page,
+    ): void {
+        $member = Member::factory()->create();
+        Sanctum::actingAs($member);
+        Order::factory()->for($member)->count(31)->create();
+
+        $this->getJson("/api/orders?{$query}")->assertOk()
+            ->assertJsonCount(min($pageSize, max(0, 31 - ($page - 1) * $pageSize)), 'data')
+            ->assertJsonPath('meta.current_page', $page)
+            ->assertJsonPath('meta.per_page', $pageSize)
+            ->assertJsonPath('meta.total', 31);
+    }
+
+    public static function validOrderPaginationProvider(): array
+    {
+        return [
+            'minimum page size' => ['row_counts_per_page=1', 1, 1],
+            'maximum page size' => ['row_counts_per_page=30', 30, 1],
+            'page only' => ['page=2', 10, 2],
+            'null parameters' => ['row_counts_per_page=&page=', 10, 1],
+        ];
+    }
+
+    /**
+     * 訂單列表: 非法分頁參數應回傳 422 與對應欄位錯誤，不可默默修正為有效值。
+     */
+    #[DataProvider('invalidOrderPaginationProvider')]
+    public function test_index_returns_422_for_invalid_pagination_parameters(array $parameters, array $fields): void
+    {
+        Sanctum::actingAs(Member::factory()->create());
+
+        $this->getJson('/api/orders?'.http_build_query($parameters))
+            ->assertUnprocessable()
+            ->assertJsonValidationErrors($fields);
+    }
+
+    public static function invalidOrderPaginationProvider(): array
+    {
+        return [
+            'zero page size' => [['row_counts_per_page' => 0], ['row_counts_per_page']],
+            'negative page size' => [['row_counts_per_page' => -1], ['row_counts_per_page']],
+            'page size above maximum' => [['row_counts_per_page' => 31], ['row_counts_per_page']],
+            'non-numeric page size' => [['row_counts_per_page' => 'abc'], ['row_counts_per_page']],
+            'fractional page size' => [['row_counts_per_page' => '1.5'], ['row_counts_per_page']],
+            'array page size' => [['row_counts_per_page' => [1]], ['row_counts_per_page']],
+            'zero page' => [['page' => 0], ['page']],
+            'negative page' => [['page' => -1], ['page']],
+            'non-numeric page' => [['page' => 'abc'], ['page']],
+            'fractional page' => [['page' => '1.5'], ['page']],
+            'array page' => [['page' => [1]], ['page']],
+            'both invalid' => [['row_counts_per_page' => 31, 'page' => 0], ['row_counts_per_page', 'page']],
+        ];
+    }
+
+    /**
+     * 訂單列表: 以建立時間由新到舊排序，不可直接以 ID 取代下單時間。
+     */
+    public function test_index_orders_by_creation_time_descending_before_id(): void
+    {
+        $member = Member::factory()->create();
+        Sanctum::actingAs($member);
+        $newestOrder = Order::factory()->for($member)->create(['created_at' => '2026-10-12 12:00:00']);
+        $oldestOrder = Order::factory()->for($member)->create(['created_at' => '2026-10-10 12:00:00']);
+        $middleOrder = Order::factory()->for($member)->create(['created_at' => '2026-10-11 12:00:00']);
+
+        $response = $this->getJson('/api/orders');
+
+        $response->assertOk()->assertJsonCount(3, 'data');
+        $this->assertSame(
+            [$newestOrder->id, $middleOrder->id, $oldestOrder->id],
+            array_column($response->json('data'), 'id'),
+        );
+    }
+
+    /**
+     * 訂單列表: 建立時間相同時以 ID 降冪排序，確保分頁順序穩定。
+     */
+    public function test_index_orders_by_id_descending_when_creation_times_are_equal(): void
+    {
+        $member = Member::factory()->create();
+        Sanctum::actingAs($member);
+        $orders = Order::factory()->for($member)->count(3)->create([
+            'created_at' => '2026-10-12 12:00:00',
+        ]);
+
+        $response = $this->getJson('/api/orders');
+
+        $response->assertOk()->assertJsonCount(3, 'data');
+        $this->assertSame(
+            [$orders[2]->id, $orders[1]->id, $orders[0]->id],
+            array_column($response->json('data'), 'id'),
+        );
+    }
+
+    /**
+     * 訂單列表: 各 Enum case 的訂單皆可查詢，狀態與方式欄位須保留整數原值而非中文標籤。
+     */
+    #[DataProvider('orderSummaryEnumProvider')]
+    public function test_index_includes_orders_with_each_enum_value_without_converting_it_to_a_label(
+        string $field,
+        int $value,
+    ): void {
+        $member = Member::factory()->create();
+        Sanctum::actingAs($member);
+        $order = Order::factory()->for($member)->create([$field => $value]);
+
+        $this->getJson('/api/orders')->assertOk()
+            ->assertJsonCount(1, 'data')
+            ->assertJsonPath('data.0.id', $order->id)
+            ->assertJsonPath("data.0.{$field}", $value);
+    }
+
+    public static function orderSummaryEnumProvider(): array
+    {
+        $cases = [];
+
+        foreach ([
+            'status' => Status::cases(),
+            'payment_status' => PaymentStatus::cases(),
+            'payment_method' => PaymentMethod::cases(),
+            'shipping_method' => ShippingMethod::cases(),
+        ] as $field => $enumCases) {
+            foreach ($enumCases as $case) {
+                $cases["{$field}: {$case->name}"] = [$field, $case->value];
+            }
+        }
+
+        return $cases;
+    }
+
+    /**
+     * 訂單列表: 商品件數須逐筆訂單加總 quantity，而非明細筆數；無明細時回傳整數零。
+     */
+    public function test_index_sums_item_quantities_per_order_and_returns_integer_zero_for_orders_without_details(): void
+    {
+        $member = Member::factory()->create();
+        Sanctum::actingAs($member);
+        $order = Order::factory()->for($member)->create(['created_at' => '2026-10-12 12:00:00']);
+        OrderDetail::factory()->for($order)->create(['quantity' => 2]);
+        OrderDetail::factory()->for($order)->create(['quantity' => 3]);
+        $emptyOrder = Order::factory()->for($member)->create(['created_at' => '2026-10-11 12:00:00']);
+        $otherOrder = Order::factory()->create();
+        OrderDetail::factory()->for($otherOrder)->create(['quantity' => 9]);
+
+        $this->getJson('/api/orders')->assertOk()
+            ->assertJsonCount(2, 'data')
+            ->assertJsonPath('data.0.id', $order->id)
+            ->assertJsonPath('data.0.item_quantity', 5)
+            ->assertJsonPath('data.1.id', $emptyOrder->id)
+            ->assertJsonPath('data.1.item_quantity', 0);
+    }
+
+    /**
+     * 訂單列表: 十筆訂單涉及明細的 SELECT 不得超過兩次，避免計算商品件數造成 N+1。
+     */
+    public function test_index_does_not_query_order_details_once_per_order(): void
+    {
+        $member = Member::factory()->create();
+        Sanctum::actingAs($member);
+        $orders = Order::factory()->for($member)->count(10)->create();
+
+        foreach ($orders as $order) {
+            OrderDetail::factory()->for($order)->create(['quantity' => 3]);
+        }
+
+        $connection = DB::connection();
+        $connection->flushQueryLog();
+        $connection->enableQueryLog();
+
+        try {
+            $response = $this->getJson('/api/orders');
+            $queries = $connection->getQueryLog();
+        } finally {
+            $connection->disableQueryLog();
+            $connection->flushQueryLog();
+        }
+
+        $response->assertOk()->assertJsonCount(10, 'data');
+
+        foreach ($response->json('data') as $summary) {
+            $this->assertSame(3, $summary['item_quantity']);
+        }
+
+        $detailQueries = array_filter($queries, fn (array $query): bool => str_starts_with(
+            strtolower(ltrim($query['query'])), 'select'
+        ) && str_contains(strtolower($query['query']), 'order_details'));
+
+        $this->assertLessThanOrEqual(2, count($detailQueries), 'Order details must be aggregated or batch loaded, not queried per order.');
+    }
+
+    /**
+     * 訂單列表: 查詢必須保持唯讀，不可修改訂單、明細或庫存，也不可建立付款交易與物流。
+     */
+    public function test_index_does_not_modify_orders_inventory_or_create_payment_transactions(): void
+    {
+        $member = Member::factory()->create();
+        Sanctum::actingAs($member);
+        $order = Order::factory()->for($member)->create();
+        $detail = OrderDetail::factory()->for($order)->create(['quantity' => 3]);
+        $variant = $detail->productVariant;
+        $originalOrder = $order->fresh()->getAttributes();
+        $originalDetail = $detail->fresh()->getAttributes();
+        $originalVariant = $variant->getAttributes();
+
+        $this->getJson('/api/orders')->assertOk();
+
+        $this->assertSame($originalOrder, $order->refresh()->getAttributes());
+        $this->assertSame($originalDetail, $detail->refresh()->getAttributes());
+        $this->assertSame($originalVariant, $variant->refresh()->getAttributes());
+        $this->assertDatabaseCount('orders', 1);
+        $this->assertDatabaseCount('order_details', 1);
+        $this->assertDatabaseCount('payment_transactions', 0);
+        $this->assertDatabaseCount('shipments', 0);
+    }
+
+    /**
+     * 訂單列表: 同一會員每分鐘可讀取六十次，第六十一次應回傳 429 與重試等待時間。
+     */
+    public function test_index_is_rate_limited_after_sixty_requests_per_minute(): void
+    {
+        $this->freezeTime();
+        Sanctum::actingAs(Member::factory()->create());
+
+        for ($attempt = 0; $attempt < 60; $attempt++) {
+            $this->getJson('/api/orders')->assertOk();
+        }
+
+        $this->getJson('/api/orders')->assertTooManyRequests()
+            ->assertHeader('Retry-After');
+    }
 
     /**
      * 建立訂單: 未驗證的訪客無法建立訂單。

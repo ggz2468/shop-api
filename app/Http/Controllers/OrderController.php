@@ -5,8 +5,11 @@ namespace App\Http\Controllers;
 use App\Enums\Order\PaymentMethod;
 use App\Enums\Order\ShippingMethod;
 use App\Enums\Order\StoreType;
+use App\Http\Resources\OrderResource;
+use App\Repositories\OrderRepository;
 use App\Services\OrderService;
 use Illuminate\Http\Request;
+use Illuminate\Http\Resources\Json\AnonymousResourceCollection;
 use Illuminate\Support\Facades\Validator;
 use Illuminate\Validation\Rule;
 
@@ -20,6 +23,26 @@ class OrderController extends Controller
     public function __construct(
         private OrderService $orderService,
     ) {}
+
+    /**
+     * 訂單列表
+     */
+    public function index(Request $request): AnonymousResourceCollection
+    {
+        // 資料格式驗證
+        $validated = $request->validate([
+            'row_counts_per_page' => 'integer|min:1|max:30|nullable',
+            'page' => 'integer|min:1|nullable',
+        ]);
+
+        $orders = $this->orderService->getOrders(
+            (int) $request->user()->id,
+            (int) ($validated['row_counts_per_page'] ?? OrderRepository::DEFAULT_ROW_COUNTS_PER_PAGE),
+            (int) ($validated['page'] ?? OrderRepository::DEFAULT_PAGE),
+        );
+
+        return OrderResource::collection($orders->withQueryString());
+    }
 
     /**
      * 建立訂單

@@ -16,6 +16,7 @@ use Illuminate\Contracts\Cache\LockTimeoutException;
 use Illuminate\Contracts\Events\Dispatcher;
 use Illuminate\Database\ConnectionInterface;
 use Illuminate\Database\QueryException;
+use Illuminate\Pagination\LengthAwarePaginator;
 use Psr\Log\LoggerInterface;
 use RuntimeException;
 use Throwable;
@@ -72,6 +73,16 @@ class OrderService
         private CacheManager $cache,
         private Dispatcher $events,
     ) {}
+
+    /**
+     * 取得會員的訂單列表
+     *
+     * @return \Illuminate\Pagination\LengthAwarePaginator<int, Order>
+     */
+    public function getOrders(int $memberId, int $rowCountsPerPage, int $page): LengthAwarePaginator
+    {
+        return $this->orderRepository->getOrders($memberId, $rowCountsPerPage, $page);
+    }
 
     /**
      * 從會員購物車建立訂單
