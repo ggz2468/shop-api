@@ -16,6 +16,29 @@ class CartControllerTest extends TestCase
     use RefreshDatabase;
 
     /**
+     * 購物車路由: 非數字規格 ID 在驗證身分前回傳 404，且不得觸發購物車修改。
+     */
+    public function test_cart_item_routes_reject_non_numeric_identifiers(): void
+    {
+        $member = Member::factory()->create();
+        $variant = ProductVariant::factory()->create();
+        $cartService = Mockery::mock(CartService::class);
+        $cartService->shouldReceive('updateCartItem')->never();
+        $cartService->shouldReceive('destroyCartItem')->never();
+        $this->app->instance(CartService::class, $cartService);
+
+        $this->patchJson('/api/cart/items/not-a-variant', ['quantity' => 3])->assertNotFound();
+        $this->deleteJson('/api/cart/items/not-a-variant')->assertNotFound();
+
+        Sanctum::actingAs($member);
+
+        foreach (['not-a-variant', "-{$variant->id}", "{$variant->id}.5"] as $identifier) {
+            $this->patchJson("/api/cart/items/{$identifier}", ['quantity' => 3])->assertNotFound();
+            $this->deleteJson("/api/cart/items/{$identifier}")->assertNotFound();
+        }
+    }
+
+    /**
      * 顯示購物車內容: 未驗證的訪客無法存取購物車相關的 API 端點
      */
     public function test_guest_cannot_access_cart(): void

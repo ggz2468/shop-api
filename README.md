@@ -3,9 +3,27 @@
 ### 成果網站
 <a href="https://chun-hung.idv.tw" target="_blank">自製電子商務網站</a>
 
+### 路由識別值格式
+商品 `{product}`、購物車商品規格 `{productVariant}` 及訂單 `{order}` 路由參數僅接受數字，適用於各資源現有的讀取與操作路由。文字、負數與小數等格式不符的路徑會在路由匹配階段回傳 `404`，即使尚未登入亦同；格式有效的受保護路由仍要求身分驗證與資源歸屬檢查。
+數字格式不代表資料存在，`0` 或不存在的 ID 仍須由對應功能處理。選店 `{selectionToken}` 為 Token，維持原有格式，不套用數字限制。
+
 ### 訂單狀態字典
 `GET /api/orders/options` 提供 `order_statuses` 與 `payment_statuses`，每個項目包含 `value`、`code`、`label`。
 `payment_statuses` 代表訂單付款狀態，不是付款交易狀態。訂單列表仍回傳 Enum 整數值，前端透過字典顯示中文。
+
+### 會員訂單詳情
+`GET /api/orders/{order}` 需要 Sanctum 驗證，僅可查看本人的訂單；他人訂單、不存在的訂單及非法訂單 ID 皆回傳 `404`。沿用訂單讀取限流。
+
+回應以 `data` 包裝，包含：
+- `id`、`number`、`created_at`（ISO 8601）。
+- `status`、`payment_status`、`payment_method`、`shipping_method`（Enum 整數值）。
+- `item_quantity`、`items_subtotal`、`shipping_fee`、`tax_amount`、`total_amount`。
+- `recipient_name`、`recipient_phone`、`recipient_zip_code`、`recipient_address`。
+- `store_type`、`store_code`、`store_name`、`store_address`。
+- `items`：每筆包含 `product_variant_id`、`product_name`、`product_sku`、`product_color`、`product_size`、`product_price`、`quantity`、`subtotal`。
+
+商品與收件資料使用訂單快照，不受目前商品資料修改或軟刪除影響。`item_quantity` 與 `items_subtotal` 分別加總明細保存的 `quantity` 與 `subtotal`，無明細時為整數 `0`，`items` 為空陣列。
+運費、稅額與總額保留訂單保存值，不重新計價；稅額已內含於商品金額，不額外加總。此 API 不回傳會員 ID、冪等鍵、付款交易或物流紀錄，也不修改訂單狀態。
 
 ### 開發環境
 1. Linux(Debian GNU/Linux 12)

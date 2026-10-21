@@ -31,4 +31,16 @@ class OrderRepository extends Repository
             ->orderByDesc('id')
             ->paginate(perPage: $rowCountsPerPage, page: $page);
     }
+
+    /**
+     * 取得會員的訂單與歷史明細
+     */
+    public function getOrder(int $memberId, string $orderId): Order
+    {
+        return Order::query()
+            ->where('member_id', $memberId)
+            ->with('orderDetails')
+            ->whereKey($orderId)
+            ->firstOrFail();
+    }
 }

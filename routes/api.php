@@ -44,6 +44,7 @@ Route::prefix('verifications')->group(function () {
 });
 
 Route::apiResource('/products', ProductController::class)
+    ->whereNumber('product')
     ->middleware('throttle:products');
 
 Route::get('/health', function () {
@@ -54,7 +55,7 @@ Route::get('/health', function () {
     ]);
 });
 
-Route::middleware(['auth:sanctum', 'throttle:cart'])->prefix('cart')->group(function () {
+Route::middleware(['auth:sanctum', 'throttle:cart'])->prefix('cart')->whereNumber('productVariant')->group(function () {
     Route::get('/', [CartController::class, 'show']);
     Route::post('/items', [CartController::class, 'storeItem']);
     Route::patch('/items/{productVariant}', [CartController::class, 'updateItem']);
@@ -65,7 +66,7 @@ Route::middleware(['auth:sanctum', 'throttle:cart'])->prefix('cart')->group(func
 Route::get('/orders/options', OrderOptionsController::class)
     ->middleware('throttle:order-options');
 
-Route::middleware(['auth:sanctum', 'throttle:orders'])->prefix('orders')->group(function () {
+Route::middleware(['auth:sanctum', 'throttle:orders'])->prefix('orders')->whereNumber('order')->group(function () {
     Route::get('/', [OrderController::class, 'index']);
     Route::post('/', [OrderController::class, 'store']);
     Route::get('/{order}', [OrderController::class, 'show']);

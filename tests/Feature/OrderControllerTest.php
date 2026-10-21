@@ -10,6 +10,7 @@ use App\Enums\Order\StoreType;
 use App\Enums\PaymentTransaction\PaymentMethod as PaymentTransactionPaymentMethod;
 use App\Enums\PaymentTransaction\Provider;
 use App\Enums\PaymentTransaction\Status as PaymentTransactionStatus;
+use App\Enums\ProductSpec\Size;
 use App\Events\OrderCreated;
 use App\Models\Member;
 use App\Models\Order;
@@ -23,6 +24,7 @@ use App\Notifications\OrderCreatedNotification;
 use App\Repositories\OrderRepository;
 use App\Services\OrderService;
 use App\Stores\CartStore;
+use Illuminate\Database\Events\QueryExecuted;
 use Illuminate\Database\QueryException;
 use Illuminate\Foundation\Testing\RefreshDatabase;
 use Illuminate\Support\Facades\DB;
@@ -36,6 +38,476 @@ use Tests\TestCase;
 class OrderControllerTest extends TestCase
 {
     use RefreshDatabase;
+
+    /**
+     * 訂單詳情: 未登入時不可查看訂單，即使指定的訂單不存在也應先回傳 401。
+     */
+    public function test_guest_cannot_view_order_details(): void
+    {
+        $order = Order::factory()->create();
+
+        $this->getJson("/api/orders/{$order->id}")->assertUnauthorized();
+        $this->getJson('/api/orders/999999')->assertUnauthorized();
+    }
+
+    /**
+     * 訂單詳情: 他人的訂單與不存在的訂單皆回傳 404，不可信任 client 指定的 member_id。
+     */
+    public function test_show_returns_404_for_another_members_order_and_a_missing_order(): void
+    {
+        Sanctum::actingAs(Member::factory()->create());
+        $otherOrder = Order::factory()->create();
+
+        $this->getJson("/api/orders/{$otherOrder->id}?member_id={$otherOrder->member_id}")
+            ->assertNotFound();
+        $this->getJson('/api/orders/999999')->assertNotFound();
+    }
+
+    /**
+     * 訂單詳情: 已有本人訂單時，非法路徑識別值仍須回傳 404，不得轉型後誤取有效訂單。
+     */
+    #[DataProvider('invalidOrderIdentifierProvider')]
+    public function test_show_returns_404_for_invalid_order_identifiers(string $identifier): void
+    {
+        $member = Member::factory()->create();
+        Sanctum::actingAs($member);
+        $order = Order::factory()->for($member)->create();
+        $identifier = str_replace('{order_id}', (string) $order->id, $identifier);
+
+        $this->getJson("/api/orders/{$identifier}")->assertNotFound();
+    }
+
+    public static function invalidOrderIdentifierProvider(): array
+    {
+        return [
+            'text' => ['not-an-order'],
+            'negative' => ['-1'],
+            'zero' => ['0'],
+            'fraction' => ['{order_id}.5'],
+        ];
+    }
+
+    /**
+     * 訂單操作路由: 非數字 ID 在驗證身分前回傳 404，不得誤取有效訂單或建立付款交易。
+     */
+    public function test_order_action_routes_reject_non_numeric_identifiers(): void
+    {
+        $member = Member::factory()->create();
+        $order = Order::factory()->for($member)->create();
+        $before = $order->refresh()->getAttributes();
+
+        $this->getJson('/api/orders/not-an-order')->assertNotFound();
+        $this->patchJson('/api/orders/not-an-order/cancel')->assertNotFound();
+        $this->getJson('/api/orders/not-an-order/payment-checkout')->assertNotFound();
+        $this->postJson('/api/orders/not-an-order/payment-transactions')->assertNotFound();
+
+        Sanctum::actingAs($member);
+
+        foreach (['not-an-order', "-{$order->id}", "{$order->id}.5"] as $identifier) {
+            $this->patchJson("/api/orders/{$identifier}/cancel")->assertNotFound();
+            $this->getJson("/api/orders/{$identifier}/payment-checkout")->assertNotFound();
+            $this->postJson("/api/orders/{$identifier}/payment-transactions")->assertNotFound();
+        }
+
+        $this->assertSame($before, $order->refresh()->getAttributes());
+        $this->assertDatabaseCount('payment_transactions', 0);
+    }
+
+    /**
+     * 訂單詳情: 僅公開約定欄位，商品明細與收件資訊皆來自快照，且稅額不得重複加總。
+     */
+    public function test_show_returns_the_exact_order_detail_contract_and_original_types(): void
+    {
+        $member = Member::factory()->create();
+        Sanctum::actingAs($member);
+        $order = Order::factory()->for($member)->create([
+            'number' => 'ORD20261012AB12CD',
+            'created_at' => '2026-10-12 13:30:00',
+            'status' => Status::STOCKING->value,
+            'payment_status' => PaymentStatus::UNPAID->value,
+            'payment_method' => PaymentMethod::CREDIT_CARD->value,
+            'shipping_method' => ShippingMethod::HOME_DELIVERY->value,
+            'total_amount' => 880,
+            'tax_amount' => 39,
+            'shipping_fee' => 80,
+            'recipient_name' => '王小明',
+            'recipient_phone' => '0912345678',
+            'recipient_zip_code' => '100',
+            'recipient_address' => '台北市測試路 1 號',
+        ]);
+        $detail = OrderDetail::factory()->for($order)->create([
+            'product_name' => '經典上衣',
+            'product_sku' => 'TOP-BLACK-M',
+            'product_color' => '黑色',
+            'product_size' => Size::M->value,
+            'product_price' => 400,
+            'quantity' => 2,
+            'subtotal' => 800,
+        ]);
+        PaymentTransaction::factory()->for($order)->count(2)->create();
+        Shipment::factory()->for($order)->count(2)->create();
+
+        $expected = [
+            'id' => $order->id,
+            'number' => 'ORD20261012AB12CD',
+            'created_at' => $order->created_at->toISOString(),
+            'status' => Status::STOCKING->value,
+            'payment_status' => PaymentStatus::UNPAID->value,
+            'payment_method' => PaymentMethod::CREDIT_CARD->value,
+            'shipping_method' => ShippingMethod::HOME_DELIVERY->value,
+            'item_quantity' => 2,
+            'items_subtotal' => 800,
+            'shipping_fee' => 80,
+            'tax_amount' => 39,
+            'total_amount' => 880,
+            'recipient_name' => '王小明',
+            'recipient_phone' => '0912345678',
+            'recipient_zip_code' => '100',
+            'recipient_address' => '台北市測試路 1 號',
+            'store_type' => null,
+            'store_code' => null,
+            'store_name' => null,
+            'store_address' => null,
+            'items' => [[
+                'product_variant_id' => $detail->product_variant_id,
+                'product_name' => '經典上衣',
+                'product_sku' => 'TOP-BLACK-M',
+                'product_color' => '黑色',
+                'product_size' => Size::M->value,
+                'product_price' => 400,
+                'quantity' => 2,
+                'subtotal' => 800,
+            ]],
+        ];
+
+        $response = $this->getJson("/api/orders/{$order->id}");
+
+        $response->assertOk()->assertExactJson(['data' => $expected]);
+
+        foreach ($expected as $field => $value) {
+            if ($field !== 'items') {
+                $response->assertJsonPath("data.{$field}", $value);
+            }
+        }
+
+        foreach ($expected['items'][0] as $field => $value) {
+            $response->assertJsonPath("data.items.0.{$field}", $value);
+        }
+    }
+
+    /**
+     * 訂單詳情: 多筆明細須分別回傳並加總件數與小計，不得混入同一會員其他訂單或他人明細。
+     */
+    public function test_show_aggregates_only_the_requested_orders_details(): void
+    {
+        $member = Member::factory()->create();
+        Sanctum::actingAs($member);
+        $order = Order::factory()->for($member)->create([
+            'total_amount' => 1500, 'shipping_fee' => 0, 'tax_amount' => 72,
+        ]);
+        $first = OrderDetail::factory()->for($order)->create([
+            'product_price' => 300, 'quantity' => 2, 'subtotal' => 600,
+        ]);
+        $second = OrderDetail::factory()->for($order)->create([
+            'product_price' => 300, 'quantity' => 3, 'subtotal' => 900,
+        ]);
+        $anotherOrder = Order::factory()->for($member)->create();
+        OrderDetail::factory()->for($anotherOrder)->create(['quantity' => 8, 'subtotal' => 8000]);
+        OrderDetail::factory()->create(['quantity' => 9, 'subtotal' => 9000]);
+
+        $response = $this->getJson("/api/orders/{$order->id}");
+
+        $response->assertOk()
+            ->assertJsonPath('data.id', $order->id)
+            ->assertJsonCount(2, 'data.items')
+            ->assertJsonPath('data.item_quantity', 5)
+            ->assertJsonPath('data.items_subtotal', 1500)
+            ->assertJsonPath('data.shipping_fee', 0)
+            ->assertJsonPath('data.tax_amount', 72)
+            ->assertJsonPath('data.total_amount', 1500);
+        $this->assertEqualsCanonicalizing(
+            [$first->product_variant_id, $second->product_variant_id],
+            array_column($response->json('data.items'), 'product_variant_id'),
+        );
+    }
+
+    /**
+     * 訂單詳情: 明細與商品小計皆使用已保存的 subtotal，不以單價乘數量重新計算歷史金額。
+     */
+    public function test_show_uses_stored_item_subtotals_instead_of_recalculating_them(): void
+    {
+        $member = Member::factory()->create();
+        Sanctum::actingAs($member);
+        $order = Order::factory()->for($member)->create([
+            'total_amount' => 1430, 'shipping_fee' => 80, 'tax_amount' => 65,
+        ]);
+        $first = OrderDetail::factory()->for($order)->create([
+            'product_price' => 300, 'quantity' => 2, 'subtotal' => 550,
+        ]);
+        $second = OrderDetail::factory()->for($order)->create([
+            'product_price' => 300, 'quantity' => 3, 'subtotal' => 800,
+        ]);
+
+        $response = $this->getJson("/api/orders/{$order->id}");
+
+        $response->assertOk()
+            ->assertJsonCount(2, 'data.items')
+            ->assertJsonPath('data.item_quantity', 5)
+            ->assertJsonPath('data.items_subtotal', 1350)
+            ->assertJsonPath('data.shipping_fee', 80)
+            ->assertJsonPath('data.tax_amount', 65)
+            ->assertJsonPath('data.total_amount', 1430);
+        $subtotals = array_column($response->json('data.items'), 'subtotal', 'product_variant_id');
+        $this->assertSame(550, $subtotals[$first->product_variant_id]);
+        $this->assertSame(800, $subtotals[$second->product_variant_id]);
+    }
+
+    /**
+     * 訂單詳情: 無明細時仍可讀取已儲存的訂單金額，衍生加總須為整數零而非 null。
+     */
+    public function test_show_returns_empty_items_and_zero_aggregates_without_recalculating_stored_amounts(): void
+    {
+        $member = Member::factory()->create();
+        Sanctum::actingAs($member);
+        $order = Order::factory()->for($member)->create([
+            'total_amount' => 880, 'shipping_fee' => 80, 'tax_amount' => 39,
+        ]);
+
+        $this->getJson("/api/orders/{$order->id}")->assertOk()
+            ->assertJsonPath('data.items', [])
+            ->assertJsonPath('data.item_quantity', 0)
+            ->assertJsonPath('data.items_subtotal', 0)
+            ->assertJsonPath('data.total_amount', 880)
+            ->assertJsonPath('data.shipping_fee', 80)
+            ->assertJsonPath('data.tax_amount', 39);
+    }
+
+    /**
+     * 訂單詳情: 各超商類型皆須保留門市快照與 nullable 宅配欄位，不另改為巢狀收件結構。
+     */
+    #[DataProvider('orderDetailStoreTypeProvider')]
+    public function test_show_returns_convenience_store_snapshots(string $storeType): void
+    {
+        $member = Member::factory()->create();
+        Sanctum::actingAs($member);
+        $order = Order::factory()->for($member)->create([
+            'shipping_method' => ShippingMethod::CONVENIENCE_STORE->value,
+            'recipient_zip_code' => null,
+            'recipient_address' => null,
+            'store_type' => $storeType,
+            'store_code' => '123456',
+            'store_name' => '測試門市',
+            'store_address' => '台北市門市路 1 號',
+        ]);
+
+        $this->getJson("/api/orders/{$order->id}")->assertOk()
+            ->assertJsonPath('data.shipping_method', ShippingMethod::CONVENIENCE_STORE->value)
+            ->assertJsonPath('data.recipient_name', $order->recipient_name)
+            ->assertJsonPath('data.recipient_phone', $order->recipient_phone)
+            ->assertJsonPath('data.recipient_zip_code', null)
+            ->assertJsonPath('data.recipient_address', null)
+            ->assertJsonPath('data.store_type', $storeType)
+            ->assertJsonPath('data.store_code', '123456')
+            ->assertJsonPath('data.store_name', '測試門市')
+            ->assertJsonPath('data.store_address', '台北市門市路 1 號');
+    }
+
+    public static function orderDetailStoreTypeProvider(): array
+    {
+        return array_map(fn (StoreType $type): array => [$type->value], StoreType::cases());
+    }
+
+    /**
+     * 訂單詳情: 商品、規格與會員資料修改後，仍顯示原始商品、金額及收件快照。
+     */
+    public function test_show_preserves_snapshots_after_product_spec_and_member_changes(): void
+    {
+        $member = Member::factory()->create();
+        Sanctum::actingAs($member);
+        $order = Order::factory()->for($member)->create();
+        $detail = OrderDetail::factory()->for($order)->create();
+        $variant = $detail->productVariant;
+        $variant->product->update(['name' => '修改後的商品']);
+        $variant->productSpec->update(['color' => '白色', 'size' => Size::XL->value]);
+        $variant->update(['sku' => 'CHANGED-SKU', 'price' => 99999]);
+        $member->forceFill(['phone' => '0987654321', 'address' => '修改後的會員地址'])->save();
+
+        $response = $this->getJson("/api/orders/{$order->id}");
+
+        $response->assertOk()
+            ->assertJsonPath('data.recipient_name', $order->recipient_name)
+            ->assertJsonPath('data.recipient_phone', $order->recipient_phone)
+            ->assertJsonPath('data.recipient_zip_code', $order->recipient_zip_code)
+            ->assertJsonPath('data.recipient_address', $order->recipient_address)
+            ->assertJsonPath('data.total_amount', $order->total_amount)
+            ->assertJsonPath('data.shipping_fee', $order->shipping_fee)
+            ->assertJsonPath('data.tax_amount', $order->tax_amount);
+
+        foreach (['product_name', 'product_sku', 'product_color', 'product_size', 'product_price', 'quantity', 'subtotal'] as $field) {
+            $response->assertJsonPath("data.items.0.{$field}", $detail->{$field});
+        }
+    }
+
+    /**
+     * 訂單詳情: 商品與規格商品已軟刪除時，歷史訂單仍須透過明細快照正常呈現。
+     */
+    public function test_show_preserves_items_when_the_product_and_variant_are_soft_deleted(): void
+    {
+        $member = Member::factory()->create();
+        Sanctum::actingAs($member);
+        $order = Order::factory()->for($member)->create();
+        $detail = OrderDetail::factory()->for($order)->create();
+        $variant = $detail->productVariant;
+        $variant->delete();
+        $variant->product->delete();
+
+        $this->getJson("/api/orders/{$order->id}")->assertOk()
+            ->assertJsonCount(1, 'data.items')
+            ->assertJsonPath('data.items.0.product_variant_id', $detail->product_variant_id)
+            ->assertJsonPath('data.items.0.product_name', $detail->product_name)
+            ->assertJsonPath('data.items.0.product_price', $detail->product_price)
+            ->assertJsonPath('data.items_subtotal', $detail->subtotal);
+    }
+
+    /**
+     * 訂單詳情: 舊明細未保存的 SKU、顏色與尺寸應維持 null，不以目前商品資料補值。
+     */
+    public function test_show_preserves_null_optional_item_snapshot_fields(): void
+    {
+        $member = Member::factory()->create();
+        Sanctum::actingAs($member);
+        $order = Order::factory()->for($member)->create();
+        OrderDetail::factory()->for($order)->create([
+            'product_sku' => null, 'product_color' => null, 'product_size' => null,
+        ]);
+
+        $this->getJson("/api/orders/{$order->id}")->assertOk()
+            ->assertJsonPath('data.items.0.product_sku', null)
+            ->assertJsonPath('data.items.0.product_color', null)
+            ->assertJsonPath('data.items.0.product_size', null);
+    }
+
+    /**
+     * 訂單詳情: 包含取消、完成與退款等所有狀態，Enum 欄位皆保留整數值而非中文。
+     */
+    #[DataProvider('orderSummaryEnumProvider')]
+    public function test_show_preserves_each_order_enum_value(string $field, int $value): void
+    {
+        $member = Member::factory()->create();
+        Sanctum::actingAs($member);
+        $order = Order::factory()->for($member)->create([$field => $value]);
+
+        $this->getJson("/api/orders/{$order->id}")->assertOk()
+            ->assertJsonPath('data.id', $order->id)
+            ->assertJsonPath("data.{$field}", $value);
+    }
+
+    /**
+     * 訂單詳情: 讀取十筆明細時不得逐筆查詢目前商品或規格，避免 N+1 與歷史資料依賴。
+     */
+    public function test_show_loads_multiple_items_without_per_item_queries(): void
+    {
+        $member = Member::factory()->create();
+        Sanctum::actingAs($member);
+        $order = Order::factory()->for($member)->create();
+        OrderDetail::factory()->for($order)->count(10)->create();
+        $connection = DB::connection();
+        $connection->flushQueryLog();
+        $connection->enableQueryLog();
+
+        try {
+            $response = $this->getJson("/api/orders/{$order->id}");
+            $queries = $connection->getQueryLog();
+        } finally {
+            $connection->disableQueryLog();
+            $connection->flushQueryLog();
+        }
+
+        $response->assertOk()->assertJsonCount(10, 'data.items');
+        $detailQueries = array_filter($queries, fn (array $query): bool => str_starts_with(
+            strtolower(ltrim($query['query'])), 'select'
+        ) && preg_match('/order_details|products|product_variants|product_specs/i', $query['query']));
+        $this->assertLessThanOrEqual(3, count($detailQueries), 'Snapshot items must not trigger per-item queries.');
+    }
+
+    /**
+     * 訂單詳情: 重複讀取不修改訂單、明細或庫存，也不建立付款交易、物流或派送建立訂單事件。
+     */
+    public function test_show_is_read_only_when_requested_repeatedly(): void
+    {
+        $member = Member::factory()->create();
+        Sanctum::actingAs($member);
+        $order = Order::factory()->for($member)->create();
+        $detail = OrderDetail::factory()->for($order)->create();
+        $variant = $detail->productVariant;
+        $before = [
+            $order->refresh()->getAttributes(),
+            $detail->refresh()->getAttributes(),
+            $variant->refresh()->getAttributes(),
+        ];
+        Event::fake([OrderCreated::class]);
+
+        $this->getJson("/api/orders/{$order->id}")->assertOk();
+        $this->getJson("/api/orders/{$order->id}")->assertOk();
+
+        $this->assertSame($before, [
+            $order->refresh()->getAttributes(),
+            $detail->refresh()->getAttributes(),
+            $variant->refresh()->getAttributes(),
+        ]);
+        $this->assertDatabaseCount('orders', 1);
+        $this->assertDatabaseCount('order_details', 1);
+        $this->assertDatabaseCount('payment_transactions', 0);
+        $this->assertDatabaseCount('shipments', 0);
+        Event::assertNotDispatched(OrderCreated::class);
+    }
+
+    /**
+     * 訂單詳情: 明細查詢失敗時回傳通用 500，不洩漏 SQL 或將失敗當作空明細。
+     */
+    public function test_show_returns_a_generic_500_when_loading_details_fails(): void
+    {
+        config()->set('app.debug', false);
+        $member = Member::factory()->create();
+        Sanctum::actingAs($member);
+        $order = Order::factory()->for($member)->create();
+        OrderDetail::factory()->for($order)->create();
+        $queryAttempted = false;
+        DB::listen(function (QueryExecuted $query) use (&$queryAttempted): void {
+            if (str_starts_with(strtolower(ltrim($query->sql)), 'select')
+                && str_contains(strtolower($query->sql), 'order_details')) {
+                $queryAttempted = true;
+                throw new QueryException(
+                    $query->connectionName,
+                    $query->sql,
+                    $query->bindings,
+                    new \RuntimeException('Internal order detail query failure'),
+                );
+            }
+        });
+
+        $response = $this->getJson("/api/orders/{$order->id}");
+
+        $this->assertTrue($queryAttempted, 'The request must reach the detail query, not fail because show() is missing.');
+        $response->assertInternalServerError()->assertExactJson(['message' => 'Server Error']);
+    }
+
+    /**
+     * 訂單詳情: 套用既有訂單讀取限流，每分鐘第六十一次請求須回傳 429 與等待時間。
+     */
+    public function test_show_is_rate_limited_after_sixty_requests_per_minute(): void
+    {
+        $this->freezeTime();
+        $member = Member::factory()->create();
+        Sanctum::actingAs($member);
+        $order = Order::factory()->for($member)->create();
+
+        for ($attempt = 0; $attempt < 60; $attempt++) {
+            $this->getJson("/api/orders/{$order->id}")->assertOk();
+        }
+
+        $this->getJson("/api/orders/{$order->id}")->assertTooManyRequests()->assertHeader('Retry-After');
+    }
 
     /**
      * 訂單列表: 未驗證的訪客應收到 401，無法查詢會員訂單。

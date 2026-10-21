@@ -22,6 +22,26 @@ class ProductControllerTest extends TestCase
     }
 
     /**
+     * 商品路由: 非數字 ID 應回傳 404，不得轉型後查詢或修改有效商品。
+     */
+    public function test_product_routes_reject_non_numeric_identifiers(): void
+    {
+        $product = Product::factory()->create();
+        $before = $product->refresh()->getAttributes();
+        $productService = Mockery::mock(ProductService::class);
+        $productService->shouldReceive('getProductData')->never();
+        $this->app->instance(ProductService::class, $productService);
+
+        foreach (['not-a-product', "-{$product->id}", "{$product->id}.5"] as $identifier) {
+            foreach (['GET', 'PUT', 'PATCH', 'DELETE'] as $method) {
+                $this->json($method, "/api/products/{$identifier}")->assertNotFound();
+            }
+        }
+
+        $this->assertSame($before, $product->refresh()->getAttributes());
+    }
+
+    /**
      * 產品列表：資料格式錯誤時應回傳 422。
      */
     public function test_index_returns_422_when_validation_fails(): void

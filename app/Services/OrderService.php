@@ -85,6 +85,14 @@ class OrderService
     }
 
     /**
+     * 取得會員的訂單詳情
+     */
+    public function getOrder(int $memberId, string $orderId): Order
+    {
+        return $this->orderRepository->getOrder($memberId, $orderId);
+    }
+
+    /**
      * 從會員購物車建立訂單
      *
      * @param  array{name?: string, phone?: string, zip_code?: string, address?: string}  $recipientData

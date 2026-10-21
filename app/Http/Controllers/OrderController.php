@@ -5,9 +5,12 @@ namespace App\Http\Controllers;
 use App\Enums\Order\PaymentMethod;
 use App\Enums\Order\ShippingMethod;
 use App\Enums\Order\StoreType;
+use App\Http\Resources\OrderDetailResource;
 use App\Http\Resources\OrderResource;
+use App\Models\Order;
 use App\Repositories\OrderRepository;
 use App\Services\OrderService;
+use Illuminate\Http\JsonResponse;
 use Illuminate\Http\Request;
 use Illuminate\Http\Resources\Json\AnonymousResourceCollection;
 use Illuminate\Support\Facades\Validator;
@@ -15,11 +18,6 @@ use Illuminate\Validation\Rule;
 
 class OrderController extends Controller
 {
-    /**
-     * 建構子
-     *
-     * @return void
-     */
     public function __construct(
         private OrderService $orderService,
     ) {}
@@ -45,11 +43,19 @@ class OrderController extends Controller
     }
 
     /**
-     * 建立訂單
-     *
-     * @return \Illuminate\Http\JsonResponse
+     * 訂單詳情
      */
-    public function store(Request $request)
+    public function show(Request $request, Order $order): OrderDetailResource
+    {
+        $order = $this->orderService->getOrder((int) $request->user()->id, (string) $order->getKey());
+
+        return new OrderDetailResource($order);
+    }
+
+    /**
+     * 建立訂單
+     */
+    public function store(Request $request): JsonResponse
     {
         $idempotencyKey = $request->header('Idempotency-Key');
 
