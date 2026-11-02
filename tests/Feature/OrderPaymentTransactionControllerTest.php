@@ -237,6 +237,46 @@ class OrderPaymentTransactionControllerTest extends TestCase
     }
 
     /**
+     * 建立付款交易: 詳情曾允許新增也必須重新驗證，防止讀取後新增交易或狀態改變造成重複付款。
+     */
+    public function test_store_rechecks_eligibility_after_order_detail_was_read(): void
+    {
+        foreach (['pending', 'authorized', 'paid', 'canceled'] as $scenario) {
+            $member = Member::factory()->create();
+            Sanctum::actingAs($member);
+            $order = $this->createPayableOrder($member);
+            $this->getJson("/api/orders/{$order->id}")
+                ->assertOk()
+                ->assertJsonPath('data.actions.can_create_payment_transaction', true);
+
+            if (in_array($scenario, ['pending', 'authorized'], true)) {
+                PaymentTransaction::factory()->for($order)->create([
+                    'status' => $scenario === 'pending'
+                        ? PaymentTransactionStatus::PENDING->value
+                        : PaymentTransactionStatus::AUTHORIZED->value,
+                ]);
+            } elseif ($scenario === 'paid') {
+                $order->update(['payment_status' => PaymentStatus::PAID->value]);
+            } else {
+                $order->update(['status' => OrderStatus::CANCELED->value]);
+            }
+
+            $this->postJson("/api/orders/{$order->id}/payment-transactions")
+                ->assertConflict()
+                ->assertJsonPath('message', in_array($scenario, ['pending', 'authorized'], true)
+                    ? '已有進行中的付款交易。'
+                    : '此訂單目前無法建立付款交易。');
+            $this->assertSame(
+                in_array($scenario, ['pending', 'authorized'], true) ? 1 : 0,
+                PaymentTransaction::query()->where('order_id', $order->id)->count(),
+            );
+            $this->getJson("/api/orders/{$order->id}")
+                ->assertOk()
+                ->assertJsonPath('data.actions.can_create_payment_transaction', false);
+        }
+    }
+
+    /**
      * 建立付款交易: 重複呼叫時不可建立多筆待付款交易。
      */
     public function test_store_does_not_create_duplicate_pending_payment_transaction(): void

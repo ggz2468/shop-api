@@ -58,11 +58,6 @@ class OrderService
      */
     private const int CHECKOUT_LOCK_WAIT_SECONDS = 3;
 
-    /**
-     * 建構子
-     *
-     * @return void
-     */
     public function __construct(
         private OrderRepository $orderRepository,
         private OrderDetailRepository $orderDetailRepository,
@@ -72,6 +67,7 @@ class OrderService
         private LoggerInterface $logger,
         private CacheManager $cache,
         private Dispatcher $events,
+        private OrderPaymentTransactionService $orderPaymentTransactionService,
     ) {}
 
     /**
@@ -86,10 +82,15 @@ class OrderService
 
     /**
      * 取得會員的訂單詳情
+     *
+     * @throws \Illuminate\Database\Eloquent\ModelNotFoundException<Order>
      */
     public function getOrder(int $memberId, string $orderId): Order
     {
-        return $this->orderRepository->getOrder($memberId, $orderId);
+        $order = $this->orderRepository->getOrder($memberId, $orderId);
+        $order->setAttribute('can_create_payment_transaction', $this->orderPaymentTransactionService->canCreateForOrder($order));
+
+        return $order;
     }
 
     /**

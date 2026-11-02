@@ -28,6 +28,14 @@ class OrderPaymentTransactionService
     ) {}
 
     /**
+     * 查詢當下的新增資格，不代表稍後建立交易時仍可新增。
+     */
+    public function canCreateForOrder(Order $order): bool
+    {
+        return $this->getCreationConflict($order) === null;
+    }
+
+    /**
      * @return array{status: int, message: string, data?: array<string, mixed>}
      */
     public function createForOrder(int $memberId, Order $order): array
@@ -42,14 +50,10 @@ class OrderPaymentTransactionService
                     throw new RuntimeException('找不到付款資料。', 404);
                 }
 
-                $activePaymentTransaction = $this->paymentTransactionRepository->getPendingOrAuthorizedByOrder($lockedOrder);
+                $conflict = $this->getCreationConflict($lockedOrder);
 
-                if ($activePaymentTransaction instanceof PaymentTransaction) {
-                    throw new RuntimeException('已有進行中的付款交易。', 409);
-                }
-
-                if (! $this->isOrderPayable($lockedOrder)) {
-                    throw new RuntimeException('此訂單目前無法建立付款交易。', 409);
+                if ($conflict !== null) {
+                    throw new RuntimeException($conflict, 409);
                 }
 
                 if ((int) $lockedOrder->payment_status === OrderPaymentStatus::FAILED->value) {
@@ -115,12 +119,20 @@ class OrderPaymentTransactionService
         }
     }
 
-    private function isOrderPayable(Order $order): bool
+    private function getCreationConflict(Order $order): ?string
     {
-        return (int) $order->status === OrderStatus::STOCKING->value
-            && in_array((int) $order->payment_status, [
+        if ($this->paymentTransactionRepository->getPendingOrAuthorizedByOrder($order) instanceof PaymentTransaction) {
+            return '已有進行中的付款交易。';
+        }
+
+        if ((int) $order->status !== OrderStatus::STOCKING->value
+            || ! in_array((int) $order->payment_status, [
                 OrderPaymentStatus::UNPAID->value,
                 OrderPaymentStatus::FAILED->value,
-            ], true);
+            ], true)) {
+            return '此訂單目前無法建立付款交易。';
+        }
+
+        return null;
     }
 }

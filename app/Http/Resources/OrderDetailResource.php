@@ -36,6 +36,9 @@ class OrderDetailResource extends JsonResource
             'store_code' => $this->store_code,
             'store_name' => $this->store_name,
             'store_address' => $this->store_address,
+            'actions' => [
+                'can_create_payment_transaction' => $this->can_create_payment_transaction,
+            ],
             'items' => $this->orderDetails->map(fn (OrderDetail $detail): array => [
                 'product_variant_id' => $detail->product_variant_id,
                 'product_name' => $detail->product_name,

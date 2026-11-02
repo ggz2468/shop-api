@@ -34,6 +34,8 @@ class OrderRepository extends Repository
 
     /**
      * 取得會員的訂單與歷史明細
+     *
+     * @throws \Illuminate\Database\Eloquent\ModelNotFoundException<Order>
      */
     public function getOrder(int $memberId, string $orderId): Order
     {

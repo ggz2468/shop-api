@@ -20,10 +20,14 @@
 - `item_quantity`、`items_subtotal`、`shipping_fee`、`tax_amount`、`total_amount`。
 - `recipient_name`、`recipient_phone`、`recipient_zip_code`、`recipient_address`。
 - `store_type`、`store_code`、`store_name`、`store_address`。
+- `actions.can_create_payment_transaction`（布林值）：當下是否可新增付款交易。
 - `items`：每筆包含 `product_variant_id`、`product_name`、`product_sku`、`product_color`、`product_size`、`product_price`、`quantity`、`subtotal`。
 
 商品與收件資料使用訂單快照，不受目前商品資料修改或軟刪除影響。`item_quantity` 與 `items_subtotal` 分別加總明細保存的 `quantity` 與 `subtotal`，無明細時為整數 `0`，`items` 為空陣列。
 運費、稅額與總額保留訂單保存值，不重新計價；稅額已內含於商品金額，不額外加總。此 API 不回傳會員 ID、冪等鍵、付款交易或物流紀錄，也不修改訂單狀態。
+
+`actions.can_create_payment_transaction` 僅在訂單為 `STOCKING`、付款狀態為 `UNPAID` 或 `FAILED`，且本筆訂單沒有 `PENDING` 或 `AUTHORIZED` 付款交易時為 `true`。與 `POST /api/orders/{order}/payment-transactions` 共用資格判斷；其他訂單的交易不影響結果。
+此欄位只是查詢當下的畫面提示，不保證稍後仍可新增，也不代表能否繼續既有交易付款。POST 仍於 transaction 內取得訂單鎖後重新驗證，資格改變時可回傳 `409`。讀取資格不建立交易、不重設付款失敗狀態；查詢失敗時回傳錯誤，不以可新增或不可新增的布林值掩蓋失敗。訂單列表與建立訂單回應不新增此欄位。
 
 ### 開發環境
 1. Linux(Debian GNU/Linux 12)

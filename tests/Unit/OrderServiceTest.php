@@ -17,6 +17,7 @@ use App\Models\ProductVariant;
 use App\Repositories\OrderDetailRepository;
 use App\Repositories\OrderRepository;
 use App\Repositories\ProductVariantRepository;
+use App\Services\OrderPaymentTransactionService;
 use App\Services\OrderService;
 use App\Stores\CartStore;
 use Exception;
@@ -651,6 +652,7 @@ class OrderServiceTest extends TestCase
             $logger ?? app(LoggerInterface::class),
             $cache ?? app(CacheManager::class),
             $events ?? app(Dispatcher::class),
+            app(OrderPaymentTransactionService::class),
         );
     }
 

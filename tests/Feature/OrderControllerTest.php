@@ -12,6 +12,7 @@ use App\Enums\PaymentTransaction\Provider;
 use App\Enums\PaymentTransaction\Status as PaymentTransactionStatus;
 use App\Enums\ProductSpec\Size;
 use App\Events\OrderCreated;
+use App\Events\PaymentInitiated;
 use App\Models\Member;
 use App\Models\Order;
 use App\Models\OrderDetail;
@@ -22,6 +23,7 @@ use App\Models\ProductVariant;
 use App\Models\Shipment;
 use App\Notifications\OrderCreatedNotification;
 use App\Repositories\OrderRepository;
+use App\Repositories\PaymentTransactionRepository;
 use App\Services\OrderService;
 use App\Stores\CartStore;
 use Illuminate\Database\Events\QueryExecuted;
@@ -168,6 +170,9 @@ class OrderControllerTest extends TestCase
             'store_code' => null,
             'store_name' => null,
             'store_address' => null,
+            'actions' => [
+                'can_create_payment_transaction' => false,
+            ],
             'items' => [[
                 'product_variant_id' => $detail->product_variant_id,
                 'product_name' => '經典上衣',
@@ -193,6 +198,177 @@ class OrderControllerTest extends TestCase
         foreach ($expected['items'][0] as $field => $value) {
             $response->assertJsonPath("data.items.0.{$field}", $value);
         }
+    }
+
+    /**
+     * 訂單詳情: 各訂單與付款狀態組合皆回傳布林資格，僅備貨中的未付款或付款失敗訂單可新增交易。
+     */
+    #[DataProvider('paymentTransactionCreationOrderStateProvider')]
+    public function test_show_payment_transaction_action_matches_order_state(int $status, int $paymentStatus, bool $expected): void
+    {
+        $member = Member::factory()->create();
+        Sanctum::actingAs($member);
+        $order = Order::factory()->for($member)->create([
+            'status' => $status,
+            'payment_status' => $paymentStatus,
+        ]);
+
+        $this->getJson("/api/orders/{$order->id}")
+            ->assertOk()
+            ->assertJsonPath('data.actions', ['can_create_payment_transaction' => $expected]);
+    }
+
+    public static function paymentTransactionCreationOrderStateProvider(): array
+    {
+        $cases = [];
+
+        foreach (Status::cases() as $status) {
+            foreach (PaymentStatus::cases() as $paymentStatus) {
+                $cases["{$status->name}:{$paymentStatus->name}"] = [
+                    $status->value,
+                    $paymentStatus->value,
+                    $status === Status::STOCKING && in_array($paymentStatus, [PaymentStatus::UNPAID, PaymentStatus::FAILED], true),
+                ];
+            }
+        }
+
+        return $cases;
+    }
+
+    /**
+     * 訂單詳情: 沿用 POST 的交易阻擋規則，待建立付款或已授權交易不可再新增，其他交易狀態不額外阻擋。
+     */
+    #[DataProvider('paymentTransactionCreationStateProvider')]
+    public function test_show_payment_transaction_action_matches_transaction_state(int $paymentStatus, int $transactionStatus, bool $expected): void
+    {
+        $member = Member::factory()->create();
+        Sanctum::actingAs($member);
+        $order = Order::factory()->for($member)->create([
+            'status' => Status::STOCKING->value,
+            'payment_status' => $paymentStatus,
+        ]);
+        PaymentTransaction::factory()->for($order)->create(['status' => $transactionStatus]);
+
+        $this->getJson("/api/orders/{$order->id}")
+            ->assertOk()
+            ->assertJsonPath('data.actions.can_create_payment_transaction', $expected)
+            ->assertJsonMissingPath('data.payment_transactions');
+    }
+
+    public static function paymentTransactionCreationStateProvider(): array
+    {
+        $cases = [];
+
+        foreach ([PaymentStatus::UNPAID, PaymentStatus::FAILED] as $paymentStatus) {
+            foreach (PaymentTransactionStatus::cases() as $transactionStatus) {
+                $cases["{$paymentStatus->name}:{$transactionStatus->name}"] = [
+                    $paymentStatus->value,
+                    $transactionStatus->value,
+                    ! in_array($transactionStatus, [PaymentTransactionStatus::PENDING, PaymentTransactionStatus::AUTHORIZED], true),
+                ];
+            }
+        }
+
+        return $cases;
+    }
+
+    /**
+     * 訂單詳情: 較新的失敗交易不得遮蔽較舊但仍進行中的交易。
+     */
+    public function test_show_payment_transaction_action_checks_all_active_transactions(): void
+    {
+        $member = Member::factory()->create();
+        Sanctum::actingAs($member);
+
+        foreach ([PaymentTransactionStatus::PENDING, PaymentTransactionStatus::AUTHORIZED] as $status) {
+            $order = Order::factory()->for($member)->create([
+                'status' => Status::STOCKING->value,
+                'payment_status' => PaymentStatus::UNPAID->value,
+            ]);
+            PaymentTransaction::factory()->for($order)->create(['status' => $status->value]);
+            PaymentTransaction::factory()->for($order)->create(['status' => PaymentTransactionStatus::FAILED->value]);
+
+            $this->getJson("/api/orders/{$order->id}")
+                ->assertOk()
+                ->assertJsonPath('data.actions.can_create_payment_transaction', false);
+        }
+    }
+
+    /**
+     * 訂單詳情: 同會員其他訂單或其他會員的進行中交易不得影響本筆訂單的新增資格。
+     */
+    public function test_show_payment_transaction_action_ignores_other_orders_transactions(): void
+    {
+        $member = Member::factory()->create();
+        Sanctum::actingAs($member);
+        $order = Order::factory()->for($member)->create([
+            'status' => Status::STOCKING->value,
+            'payment_status' => PaymentStatus::UNPAID->value,
+        ]);
+        $anotherOrder = Order::factory()->for($member)->create();
+        PaymentTransaction::factory()->for($anotherOrder)->create(['status' => PaymentTransactionStatus::PENDING->value]);
+        PaymentTransaction::factory()->create(['status' => PaymentTransactionStatus::AUTHORIZED->value]);
+
+        $this->getJson("/api/orders/{$order->id}")
+            ->assertOk()
+            ->assertJsonPath('data.actions.can_create_payment_transaction', true);
+    }
+
+    /**
+     * 訂單詳情: 讀取付款失敗訂單的操作資格不重設付款狀態、不修改歷史交易，也不派送付款建立事件。
+     */
+    public function test_show_payment_transaction_action_is_read_only(): void
+    {
+        $member = Member::factory()->create();
+        Sanctum::actingAs($member);
+        $order = Order::factory()->for($member)->create([
+            'status' => Status::STOCKING->value,
+            'payment_status' => PaymentStatus::FAILED->value,
+        ]);
+        $transaction = PaymentTransaction::factory()->for($order)->create([
+            'status' => PaymentTransactionStatus::FAILED->value,
+        ]);
+        $before = [$order->refresh()->getAttributes(), $transaction->refresh()->getAttributes()];
+        Event::fake([OrderCreated::class, PaymentInitiated::class]);
+
+        for ($attempt = 0; $attempt < 2; $attempt++) {
+            $this->getJson("/api/orders/{$order->id}")
+                ->assertOk()
+                ->assertJsonPath('data.actions.can_create_payment_transaction', true);
+        }
+
+        $this->assertSame($before, [$order->refresh()->getAttributes(), $transaction->refresh()->getAttributes()]);
+        $this->assertDatabaseCount('payment_transactions', 1);
+        Event::assertNotDispatched(OrderCreated::class);
+        Event::assertNotDispatched(PaymentInitiated::class);
+    }
+
+    /**
+     * 訂單詳情: 資格查詢失敗應回傳通用 500，不可假裝可新增交易或將錯誤當作無進行中交易。
+     */
+    public function test_show_returns_a_generic_500_when_payment_transaction_action_query_fails(): void
+    {
+        config()->set('app.debug', false);
+        $member = Member::factory()->create();
+        Sanctum::actingAs($member);
+        $order = Order::factory()->for($member)->create([
+            'status' => Status::STOCKING->value,
+            'payment_status' => PaymentStatus::UNPAID->value,
+        ]);
+        $repository = Mockery::mock(PaymentTransactionRepository::class);
+        $repository->shouldReceive('getPendingOrAuthorizedByOrder')->once()
+            ->with(Mockery::on(fn (Order $value): bool => $value->id === $order->id))
+            ->andThrow(new QueryException(
+                DB::connection()->getName(),
+                'select * from payment_transactions',
+                [],
+                new \RuntimeException('Internal payment eligibility query failure'),
+            ));
+        $this->app->instance(PaymentTransactionRepository::class, $repository);
+
+        $this->getJson("/api/orders/{$order->id}")
+            ->assertInternalServerError()
+            ->assertExactJson(['message' => 'Server Error']);
     }
 
     /**
