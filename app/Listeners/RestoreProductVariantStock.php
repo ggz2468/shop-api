@@ -8,12 +8,10 @@ use App\Models\Order;
 use App\Models\ProductVariant;
 use Illuminate\Database\ConnectionInterface;
 use Illuminate\Database\Eloquent\ModelNotFoundException;
+use RuntimeException;
 
 class RestoreProductVariantStock
 {
-    /**
-     * @return void
-     */
     public function __construct(
         private ConnectionInterface $db,
     ) {}
@@ -34,10 +32,13 @@ class RestoreProductVariantStock
                 return;
             }
 
-            foreach ($order->orderDetails as $orderDetail) {
-                ProductVariant::query()
-                    ->where('id', $orderDetail->product_variant_id)
-                    ->increment('stock_quantity', $orderDetail->quantity);
+            // Match checkout's product lock order, including orders whose details were inserted in reverse.
+            foreach ($order->orderDetails->sortBy('product_variant_id')->groupBy('product_variant_id') as $variantId => $details) {
+                if (ProductVariant::query()
+                    ->where('id', $variantId)
+                    ->increment('stock_quantity', (int) $details->sum('quantity')) !== 1) {
+                    throw new RuntimeException("Failed to restore stock for product variant with ID {$variantId}.");
+                }
             }
 
             $order->update(['status' => OrderStatus::CANCELED->value]);

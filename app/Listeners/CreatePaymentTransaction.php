@@ -2,6 +2,7 @@
 
 namespace App\Listeners;
 
+use App\Enums\Order\Status as OrderStatus;
 use App\Events\OrderCreated;
 use App\Events\PaymentInitiated;
 use App\Models\Order;
@@ -33,6 +34,10 @@ class CreatePaymentTransaction
 
             if (! $order instanceof Order) {
                 throw new ModelNotFoundException("Order with ID {$event->orderId} not found.");
+            }
+
+            if ($order->status === OrderStatus::CANCELED->value) {
+                return;
             }
 
             $existingPaymentTransaction = $this->paymentTransactionRepository->first(['order_id', $order->id]);

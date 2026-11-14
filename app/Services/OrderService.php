@@ -5,6 +5,8 @@ namespace App\Services;
 use App\Enums\Order\PaymentStatus;
 use App\Enums\Order\ShippingMethod;
 use App\Enums\Order\Status;
+use App\Enums\PaymentTransaction\Status as TransactionStatus;
+use App\Events\OrderCanceled;
 use App\Events\OrderCreated;
 use App\Models\Order;
 use App\Repositories\OrderDetailRepository;
@@ -91,6 +93,55 @@ class OrderService
         $order->setAttribute('can_create_payment_transaction', $this->orderPaymentTransactionService->canCreateForOrder($order));
 
         return $order;
+    }
+
+    /**
+     * @return array{status: int, message: string}
+     */
+    public function cancelOrder(int $memberId, int $orderId): array
+    {
+        try {
+            $this->db->transaction(function () use ($memberId, $orderId): void {
+                $order = Order::query()->lockForUpdate()->find($orderId);
+
+                if (! $order instanceof Order || $order->member_id !== $memberId) {
+                    throw new RuntimeException('找不到訂單。', 404);
+                }
+
+                if ($order->status === Status::CANCELED->value) {
+                    return;
+                }
+
+                if ($order->status !== Status::STOCKING->value
+                    || ! in_array($order->payment_status, [PaymentStatus::UNPAID->value, PaymentStatus::FAILED->value], true)
+                    || $order->paymentTransactions()->whereIn('status', [TransactionStatus::AUTHORIZED->value, TransactionStatus::PAID->value])->exists()
+                    || $order->shipments()->exists()) {
+                    throw new RuntimeException('此訂單目前無法取消。', 409);
+                }
+
+                // Synchronous listeners share this transaction; stock restoration marks the order canceled.
+                $this->events->dispatch(new OrderCanceled($order->id));
+            });
+
+            return ['status' => 200, 'message' => '訂單已取消。'];
+        } catch (Throwable $e) {
+            if ($e instanceof RuntimeException && in_array($e->getCode(), [404, 409], true)) {
+                $this->logger->warning($e->getMessage(), [
+                    'member_id' => $memberId,
+                    'order_id' => $orderId,
+                ]);
+
+                return ['status' => $e->getCode(), 'message' => $e->getMessage()];
+            }
+
+            $this->logger->error('取消訂單失敗', [
+                'member_id' => $memberId,
+                'order_id' => $orderId,
+                'exception' => $e,
+            ]);
+
+            return ['status' => 500, 'message' => '訂單取消失敗，請稍後再試。'];
+        }
     }
 
     /**

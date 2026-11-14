@@ -3,6 +3,7 @@
 namespace Tests\Unit;
 
 use App\Enums\Order\ShippingMethod as OrderShippingMethod;
+use App\Enums\Order\Status as OrderStatus;
 use App\Enums\Order\StoreType as OrderStoreType;
 use App\Enums\Shipment\Provider;
 use App\Enums\Shipment\ShippingMethod;
@@ -131,6 +132,27 @@ class CreateShipmentTest extends TestCase
         $this->expectException(RuntimeException::class);
 
         $this->makeListener()->handle(new PaymentSucceeded($paymentTransaction->id));
+    }
+
+    /**
+     * PaymentSucceeded: 已取消訂單收到延遲事件時，不得建立物流、派送後續事件或改寫訂單及交易。
+     */
+    public function test_handle_does_not_create_shipment_or_dispatch_events_for_canceled_order(): void
+    {
+        Event::fake([ShipmentRequested::class, ShipmentCreated::class]);
+        config(['services.shipment.default_provider' => Provider::ECPAY_LOGISTICS->value]);
+        $order = Order::factory()->create(['status' => OrderStatus::CANCELED->value]);
+        $payment = PaymentTransaction::factory()->for($order)->create();
+        $orderBefore = $order->refresh()->getAttributes();
+        $paymentBefore = $payment->refresh()->getAttributes();
+
+        $this->makeListener()->handle(new PaymentSucceeded($payment->id));
+
+        $this->assertSame(0, $order->shipments()->count());
+        $this->assertSame($orderBefore, $order->refresh()->getAttributes());
+        $this->assertSame($paymentBefore, $payment->refresh()->getAttributes());
+        Event::assertNotDispatched(ShipmentRequested::class);
+        Event::assertNotDispatched(ShipmentCreated::class);
     }
 
     private function makeListener(): CreateShipment

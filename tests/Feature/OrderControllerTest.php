@@ -11,6 +11,7 @@ use App\Enums\PaymentTransaction\PaymentMethod as PaymentTransactionPaymentMetho
 use App\Enums\PaymentTransaction\Provider;
 use App\Enums\PaymentTransaction\Status as PaymentTransactionStatus;
 use App\Enums\ProductSpec\Size;
+use App\Enums\Shipment\Status as ShipmentStatus;
 use App\Events\OrderCreated;
 use App\Events\PaymentInitiated;
 use App\Models\Member;
@@ -28,9 +29,12 @@ use App\Services\OrderService;
 use App\Stores\CartStore;
 use Illuminate\Database\Events\QueryExecuted;
 use Illuminate\Database\QueryException;
+use Illuminate\Foundation\Http\Middleware\ValidateCsrfToken;
 use Illuminate\Foundation\Testing\RefreshDatabase;
 use Illuminate\Support\Facades\DB;
 use Illuminate\Support\Facades\Event;
+use Illuminate\Support\Facades\Hash;
+use Illuminate\Support\Facades\Http;
 use Illuminate\Support\Facades\Notification;
 use Laravel\Sanctum\Sanctum;
 use Mockery;
@@ -2109,6 +2113,682 @@ class OrderControllerTest extends TestCase
         ], [
             'Idempotency-Key' => '01J3QS2AJMZV09DNXQ2EE4NM99',
         ])->assertStatus(429);
+    }
+
+    /**
+     * 取消訂單: 未登入時不可取消訂單，即使指定的訂單不存在也應先回傳 401，且不得修改資料。
+     */
+    public function test_guest_cannot_cancel_an_existing_or_missing_order(): void
+    {
+        $this->setUpCancellationTest();
+        [$order, $variant, $payment] = $this->createCancelableOrder();
+        $before = $this->snapshot($order, $variant, $payment);
+
+        $this->patchJson("/api/orders/{$order->id}/cancel")->assertUnauthorized();
+        $this->patchJson('/api/orders/0/cancel')->assertUnauthorized();
+
+        $this->assertSame($before, $this->snapshot($order, $variant, $payment));
+    }
+
+    /**
+     * 取消訂單: 他人的訂單應回傳 404，即使 client 指定擁有者的 member_id 也不得取消或修改資料。
+     */
+    public function test_member_cannot_cancel_another_members_order_even_when_supplying_the_owner_id(): void
+    {
+        $this->setUpCancellationTest();
+        [$order, $variant, $payment] = $this->createCancelableOrder();
+        Sanctum::actingAs(Member::factory()->create());
+        $before = $this->snapshot($order, $variant, $payment);
+
+        $this->patchJson("/api/orders/{$order->id}/cancel", ['member_id' => $order->member_id])
+            ->assertNotFound();
+
+        $this->assertSame($before, $this->snapshot($order, $variant, $payment));
+    }
+
+    /**
+     * 取消訂單: 已登入會員指定不存在的數字訂單 ID 時應回傳 404。
+     */
+    public function test_missing_order_returns_404(): void
+    {
+        $this->setUpCancellationTest();
+        Sanctum::actingAs(Member::factory()->create());
+
+        $this->patchJson('/api/orders/0/cancel')->assertNotFound();
+        $this->patchJson('/api/orders/999999999/cancel')->assertNotFound();
+    }
+
+    /**
+     * 取消訂單: 不符合路由數字格式的 ID，在登入前後皆應回傳 404，且不得誤取消有效訂單。
+     */
+    #[DataProvider('invalidIdentifierProvider')]
+    public function test_invalid_identifiers_return_404_before_and_after_authentication(string $identifier): void
+    {
+        $this->setUpCancellationTest();
+        [$order, $variant, $payment] = $this->createCancelableOrder();
+        $before = $this->snapshot($order, $variant, $payment);
+        $identifier = str_replace('{id}', (string) $order->id, $identifier);
+
+        $this->patchJson("/api/orders/{$identifier}/cancel")->assertNotFound();
+        Sanctum::actingAs($order->member);
+        $this->patchJson("/api/orders/{$identifier}/cancel")->assertNotFound();
+
+        $this->assertSame($before, $this->snapshot($order, $variant, $payment));
+    }
+
+    public static function invalidIdentifierProvider(): array
+    {
+        return [
+            'text' => ['not-an-order'],
+            'negative' => ['-{id}'],
+            'decimal' => ['{id}.5'],
+            'numeric prefix' => ['{id}abc'],
+            'scientific notation' => ['1e2'],
+        ];
+    }
+
+    /**
+     * 取消訂單: 僅備貨中的未付款或付款失敗訂單可取消並回補庫存，其餘未取消狀態應回傳 409 且維持原資料。
+     */
+    #[DataProvider('orderStateProvider')]
+    public function test_cancellation_requires_stocking_and_unpaid_or_failed_payment(int $status, int $paymentStatus, bool $allowed): void
+    {
+        $this->setUpCancellationTest();
+        [$order, $variant, $payment] = $this->createCancelableOrder([
+            'status' => $status,
+            'payment_status' => $paymentStatus,
+        ]);
+        Sanctum::actingAs($order->member);
+        $before = $this->snapshot($order, $variant, $payment);
+
+        $response = $this->patchJson("/api/orders/{$order->id}/cancel");
+
+        if (! $allowed) {
+            $response->assertConflict();
+            $this->assertSame($before, $this->snapshot($order, $variant, $payment));
+
+            return;
+        }
+
+        $response->assertOk()->assertJsonStructure(['message']);
+        $this->assertSame(Status::CANCELED->value, $order->refresh()->status);
+        $this->assertSame($paymentStatus, $order->payment_status);
+        $this->assertSame(12, $variant->refresh()->stock_quantity);
+        $this->assertSame(PaymentTransactionStatus::CANCELED->value, $payment->refresh()->status);
+        $this->assertSame($before['details'], $order->orderDetails()->get()->toArray());
+        $this->assertSame($before['order']['total_amount'], $order->total_amount);
+        $this->assertDatabaseCount('shipments', 0);
+    }
+
+    public static function orderStateProvider(): array
+    {
+        $cases = [];
+
+        foreach (Status::cases() as $status) {
+            if ($status === Status::CANCELED) {
+                continue;
+            }
+
+            foreach (PaymentStatus::cases() as $paymentStatus) {
+                $cases["{$status->name}/{$paymentStatus->name}"] = [
+                    $status->value,
+                    $paymentStatus->value,
+                    $status === Status::STOCKING && in_array($paymentStatus, [
+                        PaymentStatus::UNPAID,
+                        PaymentStatus::FAILED,
+                    ], true),
+                ];
+            }
+        }
+
+        return $cases;
+    }
+
+    /**
+     * 取消訂單: 重複取消皆回傳 200，庫存僅回補一次，且不得影響其他訂單。
+     */
+    public function test_repeated_cancellation_returns_200_without_restoring_stock_again_or_touching_another_order(): void
+    {
+        $this->setUpCancellationTest();
+        [$order, $variant, $payment] = $this->createCancelableOrder();
+        [$otherOrder, $otherVariant, $otherPayment] = $this->createCancelableOrder();
+        $otherBefore = $this->snapshot($otherOrder, $otherVariant, $otherPayment);
+        Sanctum::actingAs($order->member);
+
+        $this->patchJson("/api/orders/{$order->id}/cancel")->assertOk();
+        $afterFirstCancellation = $this->snapshot($order, $variant, $payment);
+        $this->patchJson("/api/orders/{$order->id}/cancel")->assertOk();
+
+        $this->assertSame(Status::CANCELED->value, $order->refresh()->status);
+        $this->assertSame(12, $variant->refresh()->stock_quantity);
+        $this->assertSame($afterFirstCancellation, $this->snapshot($order, $variant, $payment));
+        $this->assertSame($otherBefore, $this->snapshot($otherOrder, $otherVariant, $otherPayment));
+    }
+
+    /**
+     * 取消訂單: 已取消訂單應回傳 200，不再回補庫存或改寫既有付款交易。
+     */
+    public function test_already_canceled_order_does_not_restore_stock_or_rewrite_terminal_transactions(): void
+    {
+        $this->setUpCancellationTest();
+        [$order, $variant, $payment] = $this->createCancelableOrder(['status' => Status::CANCELED->value]);
+        $payment->update(['status' => PaymentTransactionStatus::CANCELED->value]);
+        Sanctum::actingAs($order->member);
+        $before = $this->snapshot($order, $variant, $payment);
+
+        $this->patchJson("/api/orders/{$order->id}/cancel")->assertOk();
+
+        $this->assertSame($before, $this->snapshot($order, $variant, $payment));
+    }
+
+    /**
+     * 取消訂單: 已有授權交易時，即使訂單付款狀態仍為未付款或失敗，也應回傳 409 且不修改資料。
+     */
+    #[DataProvider('authorizedTransactionCancellationProvider')]
+    public function test_authorized_transaction_prevents_cancellation_even_when_order_payment_state_is_stale(int $paymentStatus, bool $authorizedTransactionIsLatest): void
+    {
+        $this->setUpCancellationTest();
+        [$order, $variant, $payment] = $this->createCancelableOrder(['payment_status' => $paymentStatus]);
+        $secondPayment = PaymentTransaction::factory()->for($order)->create([
+            'status' => PaymentTransactionStatus::PENDING->value,
+        ]);
+        $authorizedPayment = $authorizedTransactionIsLatest ? $secondPayment : $payment;
+        $authorizedPayment->update(['status' => PaymentTransactionStatus::AUTHORIZED->value]);
+        Sanctum::actingAs($order->member);
+        $before = $this->snapshot($order, $variant, $payment);
+        $paymentsBefore = $order->paymentTransactions()->orderBy('id')->get()->toArray();
+
+        $this->patchJson("/api/orders/{$order->id}/cancel")->assertConflict();
+
+        $this->assertSame($before, $this->snapshot($order, $variant, $payment));
+        $this->assertSame($paymentsBefore, $order->paymentTransactions()->orderBy('id')->get()->toArray());
+    }
+
+    public static function authorizedTransactionCancellationProvider(): array
+    {
+        return [
+            'unpaid order with an older authorized transaction' => [PaymentStatus::UNPAID->value, false],
+            'unpaid order with the latest transaction authorized' => [PaymentStatus::UNPAID->value, true],
+            'failed order with an older authorized transaction' => [PaymentStatus::FAILED->value, false],
+            'failed order with the latest transaction authorized' => [PaymentStatus::FAILED->value, true],
+        ];
+    }
+
+    /**
+     * 取消訂單: 訂單付款狀態尚未同步時，任一筆已付款交易皆應阻擋取消，不得只檢查最新交易或修改資料。
+     */
+    #[DataProvider('paidTransactionCancellationProvider')]
+    public function test_paid_transaction_prevents_cancellation_even_when_order_payment_state_is_stale(int $paymentStatus, bool $paidTransactionIsLatest): void
+    {
+        $this->setUpCancellationTest();
+        [$order, $variant, $payment] = $this->createCancelableOrder(['payment_status' => $paymentStatus]);
+        $secondPayment = PaymentTransaction::factory()->for($order)->create([
+            'status' => PaymentTransactionStatus::PENDING->value,
+        ]);
+        $paidPayment = $paidTransactionIsLatest ? $secondPayment : $payment;
+        $paidPayment->update([
+            'status' => PaymentTransactionStatus::PAID->value,
+            'paid_at' => now(),
+        ]);
+        Sanctum::actingAs($order->member);
+        $before = $this->snapshot($order, $variant, $payment);
+        $paymentsBefore = $order->paymentTransactions()->orderBy('id')->get()->toArray();
+
+        $this->patchJson("/api/orders/{$order->id}/cancel")->assertConflict();
+
+        $this->assertSame($before, $this->snapshot($order, $variant, $payment));
+        $this->assertSame($paymentsBefore, $order->paymentTransactions()->orderBy('id')->get()->toArray());
+        $this->assertDatabaseCount('shipments', 0);
+        Http::assertNothingSent();
+    }
+
+    public static function paidTransactionCancellationProvider(): array
+    {
+        return [
+            'unpaid order with an older paid transaction' => [PaymentStatus::UNPAID->value, false],
+            'unpaid order with the latest transaction paid' => [PaymentStatus::UNPAID->value, true],
+            'failed order with an older paid transaction' => [PaymentStatus::FAILED->value, false],
+            'failed order with the latest transaction paid' => [PaymentStatus::FAILED->value, true],
+        ];
+    }
+
+    public static function cancelablePaymentStatusProvider(): array
+    {
+        return [
+            'unpaid' => [PaymentStatus::UNPAID->value],
+            'failed' => [PaymentStatus::FAILED->value],
+        ];
+    }
+
+    /**
+     * 取消訂單: 僅有已退款交易且其餘資格成立時仍可取消，不得改寫退款歷史或付款狀態。
+     */
+    #[DataProvider('cancelablePaymentStatusProvider')]
+    public function test_refunded_transaction_does_not_prevent_cancellation_or_change_refund_history(int $paymentStatus): void
+    {
+        $this->setUpCancellationTest();
+        [$order, $variant, $payment] = $this->createCancelableOrder(['payment_status' => $paymentStatus]);
+        $payment->update([
+            'status' => PaymentTransactionStatus::REFUNDED->value,
+            'refunded_at' => now(),
+        ]);
+        $paymentBefore = $payment->refresh()->getAttributes();
+        Sanctum::actingAs($order->member);
+
+        $this->patchJson("/api/orders/{$order->id}/cancel")->assertOk();
+
+        $this->assertSame(Status::CANCELED->value, $order->refresh()->status);
+        $this->assertSame($paymentStatus, $order->payment_status);
+        $this->assertSame(12, $variant->refresh()->stock_quantity);
+        $this->assertSame($paymentBefore, $payment->refresh()->getAttributes());
+        $this->assertSame(1, $order->paymentTransactions()->count());
+        Http::assertNothingSent();
+    }
+
+    /**
+     * 取消訂單: 同會員或其他會員之別筆訂單的授權、付款及物流資料，不得阻擋本訂單取消或被修改。
+     */
+    #[DataProvider('unrelatedCancellationBlockerProvider')]
+    public function test_other_orders_payment_and_shipment_records_do_not_prevent_cancellation(string $blocker, bool $sameMember): void
+    {
+        $this->setUpCancellationTest();
+        [$order, $variant, $payment] = $this->createCancelableOrder();
+        $otherOrder = $sameMember
+            ? Order::factory()->for($order->member)->create()
+            : Order::factory()->create();
+        $otherPayment = PaymentTransaction::factory()->for($otherOrder)->create([
+            'status' => match ($blocker) {
+                'authorized' => PaymentTransactionStatus::AUTHORIZED->value,
+                'paid' => PaymentTransactionStatus::PAID->value,
+                'shipment' => PaymentTransactionStatus::PENDING->value,
+            },
+        ]);
+        if ($blocker === 'shipment') {
+            Shipment::factory()->for($otherOrder)->create();
+        }
+
+        $otherOrderBefore = $otherOrder->refresh()->getAttributes();
+        $otherPaymentBefore = $otherPayment->refresh()->getAttributes();
+        $shipmentsBefore = Shipment::query()->orderBy('id')->get()->toArray();
+        Sanctum::actingAs($order->member);
+
+        $this->patchJson("/api/orders/{$order->id}/cancel")->assertOk();
+
+        $this->assertSame(Status::CANCELED->value, $order->refresh()->status);
+        $this->assertSame(12, $variant->refresh()->stock_quantity);
+        $this->assertSame(PaymentTransactionStatus::CANCELED->value, $payment->refresh()->status);
+        $this->assertSame($otherOrderBefore, $otherOrder->refresh()->getAttributes());
+        $this->assertSame($otherPaymentBefore, $otherPayment->refresh()->getAttributes());
+        $this->assertSame($shipmentsBefore, Shipment::query()->orderBy('id')->get()->toArray());
+        Http::assertNothingSent();
+    }
+
+    public static function unrelatedCancellationBlockerProvider(): array
+    {
+        $cases = [];
+        foreach (['authorized', 'paid', 'shipment'] as $blocker) {
+            $cases["same member/{$blocker}"] = [$blocker, true];
+            $cases["another member/{$blocker}"] = [$blocker, false];
+        }
+
+        return $cases;
+    }
+
+    /**
+     * 取消訂單: 存在任一狀態的物流紀錄時應回傳 409，不修改資料或送出外部物流請求。
+     */
+    #[DataProvider('shipmentStatusProvider')]
+    public function test_any_existing_shipment_prevents_cancellation(int $status): void
+    {
+        $this->setUpCancellationTest();
+        [$order, $variant, $payment] = $this->createCancelableOrder();
+        $shipment = Shipment::factory()->for($order)->create(['status' => $status]);
+        $shipmentBefore = $shipment->refresh()->getAttributes();
+        Sanctum::actingAs($order->member);
+        $before = $this->snapshot($order, $variant, $payment);
+
+        $this->patchJson("/api/orders/{$order->id}/cancel")->assertConflict();
+
+        $this->assertSame($before, $this->snapshot($order, $variant, $payment));
+        $this->assertSame($shipmentBefore, $shipment->refresh()->getAttributes());
+        Http::assertNothingSent();
+    }
+
+    public static function shipmentStatusProvider(): array
+    {
+        $cases = [];
+
+        foreach (ShipmentStatus::cases() as $status) {
+            $cases[$status->name] = [$status->value];
+        }
+
+        return $cases;
+    }
+
+    /**
+     * 取消訂單: 應取消所有待付款交易並回補庫存，保留失敗、已取消、已過期及已退款的交易歷史。
+     */
+    public function test_cancellation_cancels_all_pending_transactions_but_preserves_terminal_history(): void
+    {
+        $this->setUpCancellationTest();
+        [$order, $variant, $payment] = $this->createCancelableOrder();
+        Sanctum::actingAs($order->member);
+        $secondPending = PaymentTransaction::factory()->for($order)->create(['status' => PaymentTransactionStatus::PENDING->value]);
+        $history = [];
+
+        foreach ([PaymentTransactionStatus::FAILED, PaymentTransactionStatus::CANCELED, PaymentTransactionStatus::EXPIRED, PaymentTransactionStatus::REFUNDED] as $status) {
+            $transaction = PaymentTransaction::factory()->for($order)->create(['status' => $status->value]);
+            $history[$transaction->id] = $transaction->refresh()->getAttributes();
+        }
+
+        $this->patchJson("/api/orders/{$order->id}/cancel")->assertOk();
+
+        $this->assertSame(PaymentTransactionStatus::CANCELED->value, $payment->refresh()->status);
+        $this->assertSame(PaymentTransactionStatus::CANCELED->value, $secondPending->refresh()->status);
+        $this->assertSame(12, $variant->refresh()->stock_quantity);
+
+        foreach ($history as $id => $attributes) {
+            $this->assertSame($attributes, PaymentTransaction::query()->findOrFail($id)->getAttributes());
+        }
+    }
+
+    /**
+     * 取消訂單: 取消後才收到 OrderCreated 事件時，不得再建立付款交易或重複回補庫存。
+     */
+    public function test_late_order_created_event_cannot_create_a_payment_transaction_after_cancellation(): void
+    {
+        $this->setUpCancellationTest();
+        [$order, $variant, $payment] = $this->createCancelableOrder();
+        $payment->delete();
+        Sanctum::actingAs($order->member);
+
+        $this->patchJson("/api/orders/{$order->id}/cancel")->assertOk();
+        OrderCreated::dispatch($order->id);
+
+        $this->assertSame(Status::CANCELED->value, $order->refresh()->status);
+        $this->assertSame(12, $variant->refresh()->stock_quantity);
+        $this->assertSame(0, $order->paymentTransactions()->count());
+    }
+
+    /**
+     * 取消訂單: 訂單、付款或庫存寫入後發生 SQL 錯誤時，應完整 rollback 並回傳不含內部細節的伺服器錯誤。
+     */
+    #[DataProvider('sqlFailureProvider')]
+    public function test_sql_failure_rolls_back_order_payments_and_every_stock_change(string $table, int $failAfterMutation): void
+    {
+        $this->setUpCancellationTest();
+        [$order, $variant, $payment] = $this->createCancelableOrder();
+        $secondDetail = OrderDetail::factory()->for($order)->create(['quantity' => 3]);
+        $secondVariant = $secondDetail->productVariant;
+        $secondBefore = $secondVariant->getAttributes();
+        Sanctum::actingAs($order->member);
+        $before = $this->snapshot($order, $variant, $payment);
+        $baselineTransactionLevel = DB::transactionLevel();
+        $injected = false;
+        $mutationTransactionLevel = null;
+        $mutations = 0;
+
+        // Fail a real SQL statement after a successful mutation, not before any work happened.
+        DB::listen(function (QueryExecuted $query) use ($table, $failAfterMutation, &$injected, &$mutationTransactionLevel, &$mutations): void {
+            if ($injected || ! preg_match('/^update [`"]?'.preg_quote($table, '/').'[`"]?\s/i', $query->sql)) {
+                return;
+            }
+
+            if (++$mutations < $failAfterMutation) {
+                return;
+            }
+
+            $injected = true;
+            $mutationTransactionLevel = $query->connection->transactionLevel();
+            $query->connection->statement('UPDATE orders SET cancellation_test_missing_column = 1 WHERE id = ?', [-1]);
+        });
+
+        $response = $this->patchJson("/api/orders/{$order->id}/cancel");
+
+        $this->assertTrue($injected, "The request must reach a real {$table} mutation before SQL failure is injected.");
+        $this->assertSame($failAfterMutation, $mutations);
+        $this->assertGreaterThan($baselineTransactionLevel, $mutationTransactionLevel, 'Cancellation must open its own transaction, not rely on RefreshDatabase.');
+        $this->assertGreaterThanOrEqual(500, $response->status());
+        $this->assertLessThan(600, $response->status());
+        $response->assertJsonStructure(['message'])->assertJsonMissingPath('exception')->assertJsonMissingPath('trace');
+        $this->assertStringNotContainsString('cancellation_test_missing_column', $response->getContent());
+        $this->assertSame($baselineTransactionLevel, DB::transactionLevel());
+        $this->assertSame($before, $this->snapshot($order, $variant, $payment));
+        $this->assertSame($secondBefore, $secondVariant->refresh()->getAttributes());
+        $this->assertDatabaseCount('shipments', 0);
+    }
+
+    public static function sqlFailureProvider(): array
+    {
+        return [
+            'after order mutation' => ['orders', 1],
+            'after payment mutation' => ['payment_transactions', 1],
+            'after first stock mutation' => ['product_variants', 1],
+            'after both stock mutations' => ['product_variants', 2],
+        ];
+    }
+
+    /**
+     * 取消訂單: 真實登入取得 Session Cookie 並攜帶 XSRF Token 後，可取消本人訂單，無需 Personal Access Token。
+     */
+    public function test_member_can_cancel_using_a_real_session_cookie_and_valid_csrf_token(): void
+    {
+        $this->setUpCancellationTest();
+        [$order, $variant, $payment] = $this->createCancelableOrder();
+        $cookies = $this->loginCancellationSession($order->member);
+
+        $this->withHeader('X-XSRF-TOKEN', $cookies['XSRF-TOKEN'])
+            ->patchJson("/api/orders/{$order->id}/cancel")->assertOk();
+
+        $this->assertSame(Status::CANCELED->value, $order->refresh()->status);
+        $this->assertSame(12, $variant->refresh()->stock_quantity);
+        $this->assertSame(PaymentTransactionStatus::CANCELED->value, $payment->refresh()->status);
+        $this->assertSame(0, $order->member->tokens()->count());
+    }
+
+    /**
+     * 取消訂單: 使用有效 Session Cookie 但未提供或偽造 XSRF Token 時應回傳 419，不得修改資料。
+     */
+    #[DataProvider('invalidCancellationCsrfProvider')]
+    public function test_session_cancellation_rejects_missing_or_invalid_csrf_token(?string $token): void
+    {
+        $this->setUpCancellationTest();
+        [$order, $variant, $payment] = $this->createCancelableOrder();
+        $this->loginCancellationSession($order->member);
+        $this->flushHeaders();
+        $this->withHeader('Origin', 'http://localhost');
+        if ($token !== null) {
+            $this->withHeader('X-XSRF-TOKEN', $token);
+        }
+        $before = $this->snapshot($order, $variant, $payment);
+
+        $this->patchJson("/api/orders/{$order->id}/cancel")->assertStatus(419);
+
+        $this->assertSame($before, $this->snapshot($order, $variant, $payment));
+    }
+
+    public static function invalidCancellationCsrfProvider(): array
+    {
+        return [
+            'missing' => [null],
+            'invalid' => ['invalid-xsrf-token'],
+        ];
+    }
+
+    /**
+     * 取消訂單: 登出使舊 Session 失效，使用登出後的匿名 Session 與有效 XSRF Token 仍應回傳 401 且不修改資料。
+     */
+    public function test_logged_out_session_cannot_cancel_an_order(): void
+    {
+        $this->setUpCancellationTest();
+        [$order, $variant, $payment] = $this->createCancelableOrder();
+        $cookies = $this->loginCancellationSession($order->member);
+        $logout = $this->withHeader('X-XSRF-TOKEN', $cookies['XSRF-TOKEN'])
+            ->postJson('/api/auth/logout')->assertOk();
+        $this->app['auth']->forgetGuards();
+        $this->getJson('/api/auth/user')->assertUnauthorized();
+        $this->app['auth']->forgetGuards();
+        $this->withUnencryptedCookies([
+            config('session.cookie') => $logout->getCookie(config('session.cookie'), false)->getValue(),
+            'XSRF-TOKEN' => $logout->getCookie('XSRF-TOKEN', false)->getValue(),
+        ]);
+        $this->withHeader('X-XSRF-TOKEN', $logout->getCookie('XSRF-TOKEN', false)->getValue());
+        $before = $this->snapshot($order, $variant, $payment);
+
+        $this->patchJson("/api/orders/{$order->id}/cancel")->assertUnauthorized();
+
+        $this->assertSame($before, $this->snapshot($order, $variant, $payment));
+    }
+
+    /**
+     * 取消訂單: 同一會員每分鐘第 11 次寫入應回傳 429 且不修改資料，限流到期後才可取消。
+     */
+    public function test_eleventh_write_in_one_minute_is_rate_limited_without_canceling_the_target_order(): void
+    {
+        $this->setUpCancellationTest();
+        [$order, $variant, $payment] = $this->createCancelableOrder();
+        Sanctum::actingAs($order->member);
+        $this->travelTo(now()->startOfMinute());
+
+        for ($attempt = 0; $attempt < 10; $attempt++) {
+            $this->patchJson('/api/orders/0/cancel')->assertNotFound();
+        }
+
+        $before = $this->snapshot($order, $variant, $payment);
+        $this->patchJson("/api/orders/{$order->id}/cancel")
+            ->assertTooManyRequests()->assertHeader('Retry-After');
+        $this->assertSame($before, $this->snapshot($order, $variant, $payment));
+
+        $this->travel(61)->seconds();
+        $this->patchJson("/api/orders/{$order->id}/cancel")->assertOk();
+        $this->assertSame(12, $variant->refresh()->stock_quantity);
+    }
+
+    /**
+     * 取消訂單: 與付款交易寫入共用會員分鐘限流，但不影響訂單讀取或其他會員的寫入。
+     */
+    public function test_member_minute_bucket_is_shared_across_orders_and_payment_writes_but_not_reads_or_other_members(): void
+    {
+        $this->setUpCancellationTest();
+        [$order, $variant, $payment] = $this->createCancelableOrder();
+        [$otherOrder] = $this->createCancelableOrder();
+        Sanctum::actingAs($order->member);
+
+        for ($attempt = 0; $attempt < 5; $attempt++) {
+            $this->postJson('/api/orders/0/payment-transactions')->assertNotFound();
+            $this->patchJson('/api/orders/0/cancel')->assertNotFound();
+        }
+
+        $before = $this->snapshot($order, $variant, $payment);
+        $this->patchJson("/api/orders/{$order->id}/cancel")->assertTooManyRequests();
+        $this->getJson("/api/orders/{$order->id}")->assertOk();
+        $this->assertSame($before, $this->snapshot($order, $variant, $payment));
+
+        Sanctum::actingAs($otherOrder->member);
+        $this->patchJson("/api/orders/{$otherOrder->id}/cancel")->assertOk();
+    }
+
+    /**
+     * 取消訂單: 同一 IP 跨會員每小時第 51 次寫入應回傳 429，其他 IP 或限流到期後仍可操作。
+     */
+    public function test_fifty_first_write_from_the_same_ip_in_one_hour_is_rate_limited_across_members(): void
+    {
+        $this->setUpCancellationTest();
+        [$order, $variant, $payment] = $this->createCancelableOrder();
+        $this->travelTo(now()->startOfHour());
+        $this->withServerVariables(['REMOTE_ADDR' => '192.0.2.11']);
+
+        for ($memberIndex = 0; $memberIndex < 5; $memberIndex++) {
+            Sanctum::actingAs(Member::factory()->create());
+
+            for ($attempt = 0; $attempt < 10; $attempt++) {
+                $this->patchJson('/api/orders/0/cancel')->assertNotFound();
+            }
+        }
+
+        Sanctum::actingAs($order->member);
+        $before = $this->snapshot($order, $variant, $payment);
+        $this->patchJson("/api/orders/{$order->id}/cancel")
+            ->assertTooManyRequests()->assertHeader('Retry-After');
+        $this->assertSame($before, $this->snapshot($order, $variant, $payment));
+
+        $this->withServerVariables(['REMOTE_ADDR' => '192.0.2.12'])
+            ->patchJson("/api/orders/{$order->id}/cancel")->assertOk();
+
+        $this->travel(3601)->seconds();
+        $this->withServerVariables(['REMOTE_ADDR' => '192.0.2.11'])
+            ->patchJson("/api/orders/{$order->id}/cancel")->assertOk();
+        $this->assertSame(12, $variant->refresh()->stock_quantity);
+    }
+
+    private function loginCancellationSession(Member $member): array
+    {
+        config()->set('session.driver', 'array');
+        config()->set('sanctum.stateful', ['localhost']);
+        // Enable the real CSRF comparison; Laravel otherwise bypasses it while running PHPUnit.
+        $this->app->instance(ValidateCsrfToken::class, new class($this->app, $this->app['encrypter']) extends ValidateCsrfToken
+        {
+            protected function runningUnitTests(): bool
+            {
+                return false;
+            }
+        });
+        $member->update(['password' => Hash::make('Password123')]);
+        $this->withCredentials()->withHeader('Origin', 'http://localhost');
+        $csrf = $this->get('/sanctum/csrf-cookie')->assertNoContent();
+        $cookies = [
+            config('session.cookie') => $csrf->getCookie(config('session.cookie'), false)->getValue(),
+            'XSRF-TOKEN' => $csrf->getCookie('XSRF-TOKEN', false)->getValue(),
+        ];
+        $login = $this->withUnencryptedCookies($cookies)
+            ->withHeader('X-XSRF-TOKEN', $cookies['XSRF-TOKEN'])
+            ->postJson('/api/auth/login', [
+                'email' => $member->email,
+                'password' => 'Password123',
+            ])->assertOk();
+        $cookies = [
+            config('session.cookie') => $login->getCookie(config('session.cookie'), false)->getValue(),
+            'XSRF-TOKEN' => $login->getCookie('XSRF-TOKEN', false)->getValue(),
+        ];
+        $this->withUnencryptedCookies($cookies);
+        $this->app['auth']->forgetGuards();
+        $this->withHeader('X-XSRF-TOKEN', $cookies['XSRF-TOKEN'])
+            ->getJson('/api/auth/user')->assertOk();
+        $this->assertAuthenticatedAs($member, 'web');
+        $this->app['auth']->forgetGuards();
+
+        return $cookies;
+    }
+
+    private function setUpCancellationTest(): void
+    {
+        config()->set('app.debug', false);
+        config()->set('cache.default', 'array');
+        Notification::fake();
+        Http::preventStrayRequests();
+    }
+
+    /**
+     * @return array{Order, ProductVariant, PaymentTransaction}
+     */
+    private function createCancelableOrder(array $attributes = []): array
+    {
+        $order = Order::factory()->create($attributes);
+        $variant = ProductVariant::factory()->create(['stock_quantity' => 10]);
+        OrderDetail::factory()->for($order)->forProductVariant($variant, 2)->create();
+        $payment = PaymentTransaction::factory()->for($order)->create(['status' => PaymentTransactionStatus::PENDING->value]);
+
+        return [$order, $variant, $payment];
+    }
+
+    private function snapshot(Order $order, ProductVariant $variant, PaymentTransaction $payment): array
+    {
+        return [
+            'order' => $order->refresh()->getAttributes(),
+            'variant' => $variant->refresh()->getAttributes(),
+            'payment' => $payment->refresh()->getAttributes(),
+            'details' => $order->orderDetails()->get()->toArray(),
+        ];
     }
 
     private function assertStoreOrderServiceFailure(int $status, string $message): void

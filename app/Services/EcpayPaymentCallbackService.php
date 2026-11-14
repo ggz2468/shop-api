@@ -2,12 +2,14 @@
 
 namespace App\Services;
 
+use App\Enums\Order\Status as OrderStatus;
 use App\Enums\PaymentTransaction\Provider;
 use App\Enums\PaymentTransaction\Status;
 use App\Events\PaymentAuthorized;
 use App\Events\PaymentFailed;
 use App\Events\PaymentSucceeded;
 use App\Gateways\Payments\EcpayPaymentGateway;
+use App\Models\Order;
 use App\Models\PaymentTransaction;
 use App\Repositories\PaymentTransactionRepository;
 use Illuminate\Contracts\Config\Repository as ConfigRepository;
@@ -89,96 +91,105 @@ class EcpayPaymentCallbackService
                 throw new RuntimeException('0|Payment transaction not found', 404);
             }
 
-            // 檢查交易紀錄狀態是否為「已取消」、「已退款」其中一種
-            if (in_array((int) $paymentTransaction->status, [
-                Status::CANCELED->value,
-                Status::REFUNDED->value,
-            ], true)) {
-                throw new RuntimeException('0|Invalid payment transaction status', 400);
-            }
+            return $paymentTransaction->getConnection()->transaction(function () use ($paymentTransaction, $payload): array {
+                $order = Order::query()->lockForUpdate()->findOrFail($paymentTransaction->order_id);
+                $paymentTransaction->refresh();
 
-            $merchantId = (string) $this->config->get('services.ecpay.merchant_id');
-
-            // 檢查是否有設定 Ecpay merchant id
-            if ($merchantId === '') {
-                throw new RuntimeException('Ecpay merchant id is not configured.');
-            }
-
-            // 檢查 MerchantID 是否正確
-            if ($payload['MerchantID'] !== $merchantId) {
-                throw new RuntimeException('0|Invalid MerchantID', 400);
-            }
-
-            // 檢查交易金額格式是否正確
-            if (! ctype_digit($payload['TradeAmt'])) {
-                throw new RuntimeException('0|Invalid TradeAmt', 400);
-            }
-
-            // 檢查交易金額是否正確
-            if ((int) $payload['TradeAmt'] !== (int) $paymentTransaction->amount) {
-                throw new RuntimeException('0|Payment amount mismatch', 400);
-            }
-
-            // 檢查交易紀錄狀態是否為「已付款」
-            if ((int) $paymentTransaction->status === Status::PAID->value) {
-                if ($payload['RtnCode'] !== '1') {
-                    throw new RuntimeException('0|Payment callback status conflict', 400);
+                if ($order->status === OrderStatus::CANCELED->value) {
+                    throw new RuntimeException('0|Invalid payment transaction status', 400);
                 }
 
-                return [
-                    'status' => 200,
-                    'content' => '1|OK',
-                ];
-            }
-
-            $isSuccessfulCallback = $payload['RtnCode'] === '1';
-            $isAuthorizedCallback = $this->isAuthorizedCallback($payload);
-
-            // 檢查交易紀錄狀態是否為「已授權」
-            if ((int) $paymentTransaction->status === Status::AUTHORIZED->value) {
-                // 已授權狀態下，只接受「授權重送」或「付款成功」。
-                // 其他狀態都是衝突。
-                if (! $isAuthorizedCallback && ! $isSuccessfulCallback) {
-                    throw new RuntimeException('0|Payment callback status conflict', 400);
+                // 檢查交易紀錄狀態是否為「已取消」、「已退款」其中一種
+                if (in_array((int) $paymentTransaction->status, [
+                    Status::CANCELED->value,
+                    Status::REFUNDED->value,
+                ], true)) {
+                    throw new RuntimeException('0|Invalid payment transaction status', 400);
                 }
 
-                if ($isAuthorizedCallback) {
+                $merchantId = (string) $this->config->get('services.ecpay.merchant_id');
+
+                // 檢查是否有設定 Ecpay merchant id
+                if ($merchantId === '') {
+                    throw new RuntimeException('Ecpay merchant id is not configured.');
+                }
+
+                // 檢查 MerchantID 是否正確
+                if ($payload['MerchantID'] !== $merchantId) {
+                    throw new RuntimeException('0|Invalid MerchantID', 400);
+                }
+
+                // 檢查交易金額格式是否正確
+                if (! ctype_digit($payload['TradeAmt'])) {
+                    throw new RuntimeException('0|Invalid TradeAmt', 400);
+                }
+
+                // 檢查交易金額是否正確
+                if ((int) $payload['TradeAmt'] !== (int) $paymentTransaction->amount) {
+                    throw new RuntimeException('0|Payment amount mismatch', 400);
+                }
+
+                // 檢查交易紀錄狀態是否為「已付款」
+                if ((int) $paymentTransaction->status === Status::PAID->value) {
+                    if ($payload['RtnCode'] !== '1') {
+                        throw new RuntimeException('0|Payment callback status conflict', 400);
+                    }
+
                     return [
                         'status' => 200,
                         'content' => '1|OK',
                     ];
                 }
-            }
 
-            // 檢查交易紀錄狀態是否為「付款失敗」
-            if ((int) $paymentTransaction->status === Status::FAILED->value) {
-                if ($isSuccessfulCallback) {
-                    throw new RuntimeException('0|Payment callback status conflict', 400);
+                $isSuccessfulCallback = $payload['RtnCode'] === '1';
+                $isAuthorizedCallback = $this->isAuthorizedCallback($payload);
+
+                // 檢查交易紀錄狀態是否為「已授權」
+                if ((int) $paymentTransaction->status === Status::AUTHORIZED->value) {
+                    // 已授權狀態下，只接受「授權重送」或「付款成功」。
+                    // 其他狀態都是衝突。
+                    if (! $isAuthorizedCallback && ! $isSuccessfulCallback) {
+                        throw new RuntimeException('0|Payment callback status conflict', 400);
+                    }
+
+                    if ($isAuthorizedCallback) {
+                        return [
+                            'status' => 200,
+                            'content' => '1|OK',
+                        ];
+                    }
                 }
 
-                if ($isAuthorizedCallback) {
-                    throw new RuntimeException('0|Payment callback status conflict', 400);
+                // 檢查交易紀錄狀態是否為「付款失敗」
+                if ((int) $paymentTransaction->status === Status::FAILED->value) {
+                    if ($isSuccessfulCallback) {
+                        throw new RuntimeException('0|Payment callback status conflict', 400);
+                    }
+
+                    if ($isAuthorizedCallback) {
+                        throw new RuntimeException('0|Payment callback status conflict', 400);
+                    }
+
+                    return [
+                        'status' => 200,
+                        'content' => '1|OK',
+                    ];
                 }
+
+                // 依據 RtnCode 內容決定應該 dispatch 哪個 event
+                $this->events->dispatch(
+                    match (true) {
+                        $isSuccessfulCallback => new PaymentSucceeded($paymentTransaction->id, $payload),
+                        $isAuthorizedCallback => new PaymentAuthorized($paymentTransaction->id, $payload),
+                        default => new PaymentFailed($paymentTransaction->id, $payload['RtnMsg'], $payload),
+                    }
+                );
 
                 return [
                     'status' => 200,
                     'content' => '1|OK',
                 ];
-            }
-
-            // 依據 RtnCode 內容決定應該 dispatch 哪個 event
-            $this->events->dispatch(
-                match (true) {
-                    $isSuccessfulCallback => new PaymentSucceeded($paymentTransaction->id, $payload),
-                    $isAuthorizedCallback => new PaymentAuthorized($paymentTransaction->id, $payload),
-                    default => new PaymentFailed($paymentTransaction->id, $payload['RtnMsg'], $payload),
-                }
-            );
-
-            return [
-                'status' => 200,
-                'content' => '1|OK',
-            ];
+            });
         } catch (Throwable $e) {
             $code = (int) $e->getCode();
             if (in_array($code, [400, 404], true)) {

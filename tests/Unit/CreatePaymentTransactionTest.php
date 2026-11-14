@@ -3,6 +3,7 @@
 namespace Tests\Unit;
 
 use App\Enums\Order\PaymentMethod;
+use App\Enums\Order\Status as OrderStatus;
 use App\Enums\PaymentTransaction\PaymentMethod as PaymentTransactionPaymentMethod;
 use App\Enums\PaymentTransaction\Provider;
 use App\Enums\PaymentTransaction\Status;
@@ -152,6 +153,22 @@ class CreatePaymentTransactionTest extends TestCase
         $this->expectException(ModelNotFoundException::class);
 
         $this->makeListener()->handle(new OrderCreated(999999));
+    }
+
+    /**
+     * OrderCreated: 已取消訂單收到延遲事件時，不得建立交易、派送付款初始化事件或改寫訂單。
+     */
+    public function test_handle_does_not_create_payment_or_dispatch_payment_initiated_for_canceled_order(): void
+    {
+        Event::fake([PaymentInitiated::class]);
+        $order = Order::factory()->create(['status' => OrderStatus::CANCELED->value]);
+        $before = $order->refresh()->getAttributes();
+
+        $this->makeListener()->handle(new OrderCreated($order->id));
+
+        $this->assertSame(0, $order->paymentTransactions()->count());
+        $this->assertSame($before, $order->refresh()->getAttributes());
+        Event::assertNotDispatched(PaymentInitiated::class);
     }
 
     private function makeListener(): CreatePaymentTransaction

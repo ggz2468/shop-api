@@ -2,6 +2,7 @@
 
 namespace App\Services;
 
+use App\Enums\Order\Status as OrderStatus;
 use App\Enums\Shipment\Provider;
 use App\Events\ShipmentDelivered;
 use App\Events\ShipmentShipped;
@@ -76,37 +77,45 @@ class EcpayShipmentCallbackService
                 throw new RuntimeException('0|Order not found', 404);
             }
 
-            $shipment = $this->shipmentRepository->first([
-                ['order_id', $order->id],
-                ['provider', Provider::ECPAY_LOGISTICS->value],
-            ]);
+            return $order->getConnection()->transaction(function () use ($order, $payload): array {
+                $order = Order::query()->lockForUpdate()->findOrFail($order->id);
 
-            // 檢查物流單是否存在
-            if (! $shipment instanceof Shipment) {
-                throw new RuntimeException('0|Shipment not found', 404);
-            }
-
-            $event = $this->resolveEvent($shipment, $payload);
-
-            // 檢查綠界物流是否提供貨態資訊
-            if ($event === null) {
-                $this->logger->info('Ecpay shipment callback does not require shipment state transition.', [
-                    'shipment_id' => $shipment->id,
-                    'payload' => $payload,
+                $shipment = $this->shipmentRepository->first([
+                    ['order_id', $order->id],
+                    ['provider', Provider::ECPAY_LOGISTICS->value],
                 ]);
+
+                // 檢查物流單是否存在
+                if (! $shipment instanceof Shipment) {
+                    throw new RuntimeException('0|Shipment not found', 404);
+                }
+
+                if ($order->status === OrderStatus::CANCELED->value) {
+                    return ['status' => 200, 'content' => '1|OK'];
+                }
+
+                $event = $this->resolveEvent($shipment, $payload);
+
+                // 檢查綠界物流是否提供貨態資訊
+                if ($event === null) {
+                    $this->logger->info('Ecpay shipment callback does not require shipment state transition.', [
+                        'shipment_id' => $shipment->id,
+                        'payload' => $payload,
+                    ]);
+
+                    return [
+                        'status' => 200,
+                        'content' => '1|OK',
+                    ];
+                }
+
+                $this->events->dispatch($event);
 
                 return [
                     'status' => 200,
                     'content' => '1|OK',
                 ];
-            }
-
-            $this->events->dispatch($event);
-
-            return [
-                'status' => 200,
-                'content' => '1|OK',
-            ];
+            });
         } catch (Throwable $e) {
             $code = (int) $e->getCode();
             if (in_array($code, [400, 404], true)) {

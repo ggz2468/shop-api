@@ -26,9 +26,9 @@
 
 ---
 
-# 2. 指令執行環境
+## 2. 指令執行環境
 
-## 2.1 PHP / Composer / Artisan 執行位置
+### 2.1 PHP / Composer / Artisan 執行位置
 
 本專案禁止直接在 Host Environment 執行以下指令：
 
@@ -60,7 +60,7 @@ cd ../laradock && docker compose exec --user=laradock workspace bash -lc 'cd /va
 
 如果 Laradock 位於不同位置，請依實際 Host Path 調整 `cd ../laradock`。
 
-## 2.2 已確認的環境資訊
+### 2.2 已確認的環境資訊
 
 目前 Laradock 將 parent projects directory mount 至：
 
@@ -86,7 +86,7 @@ cd ../laradock && docker compose exec --user=laradock workspace bash -lc 'cd /va
 
 ---
 
-# 3. 核心開發原則
+## 3. 核心開發原則
 
 在修改程式碼之前，請先檢查與需求相關的既有程式碼。
 
@@ -117,7 +117,7 @@ cd ../laradock && docker compose exec --user=laradock workspace bash -lc 'cd /va
 
 ---
 
-# 4. 專案架構
+## 4. 專案架構
 
 目前專案主要採用以下分層：
 
@@ -148,7 +148,7 @@ Service
 
 ---
 
-# 5. Controller
+## 5. Controller
 
 Controller 應保持精簡。
 
@@ -171,7 +171,7 @@ Controller 主要負責：
 
 ---
 
-# 6. Service
+## 6. Service
 
 Service 負責 application logic 與 business logic。
 
@@ -195,7 +195,7 @@ Service 應維持清楚的 business responsibility。
 
 ---
 
-# 7. Repository
+## 7. Repository
 
 本專案使用 Repository 封裝部分 database access。
 
@@ -229,7 +229,7 @@ if ($productVariant->stock_quantity >= $quantity) {
 
 ---
 
-# 8. Store
+## 8. Store
 
 本專案使用 Store 封裝 Redis 等外部 state storage。
 
@@ -253,7 +253,7 @@ Redis 不應被視為商品價格、庫存或其他 authoritative business data 
 
 ---
 
-# 9. Laravel 開發規範
+## 9. Laravel 開發規範
 
 使用 Laravel 12 提供的功能與 API，除非目前專案已有不同的既有實作。
 
@@ -280,7 +280,7 @@ Redis 不應被視為商品價格、庫存或其他 authoritative business data 
 
 ---
 
-# 10. API 設計
+## 10. API 設計
 
 本專案是 RESTful API。
 
@@ -295,6 +295,7 @@ Redis 不應被視為商品價格、庫存或其他 authoritative business data 
 7. 維持既有 URL convention。
 8. 維持既有 response structure。
 9. 補上或修改相關 tests。
+10. 閱讀並維護 `docs/` 中對應的 API 文件及業務規則。
 
 除非需求明確要求，否則不要任意修改既有 API：
 
@@ -308,7 +309,7 @@ Redis 不應被視為商品價格、庫存或其他 authoritative business data 
 
 ---
 
-# 11. Validation
+## 11. Validation
 
 所有來自 client 的資料都必須視為不可信。
 
@@ -341,7 +342,7 @@ Redis 不應被視為商品價格、庫存或其他 authoritative business data 
 
 ---
 
-# 12. Authentication 與 Authorization
+## 12. Authentication 與 Authorization
 
 本專案使用 Laravel Sanctum。
 
@@ -364,7 +365,7 @@ Redis 不應被視為商品價格、庫存或其他 authoritative business data 
 
 ---
 
-# 13. Order
+## 13. Order
 
 Order 是本專案最重要的 business domain 之一，而且具有高度 concurrency sensitivity。
 
@@ -387,7 +388,7 @@ Order 是本專案最重要的 business domain 之一，而且具有高度 concu
 
 ---
 
-# 14. Idempotency
+## 14. Idempotency
 
 Order creation 使用 `Idempotency-Key`。
 
@@ -418,7 +419,7 @@ Database uniqueness constraint 是 correctness mechanism 的一部分。
 
 ---
 
-# 15. Checkout Concurrency
+## 15. Checkout Concurrency
 
 Checkout 是 concurrency-sensitive operation。
 
@@ -450,7 +451,7 @@ Checkout 是 concurrency-sensitive operation。
 
 ---
 
-# 16. Inventory
+## 16. Inventory
 
 Inventory 是 concurrency-sensitive data。
 
@@ -478,7 +479,7 @@ $productVariant->save();
 
 ---
 
-# 17. Database Transaction
+## 17. Database Transaction
 
 以下情況應考慮使用 database transaction：
 
@@ -497,7 +498,7 @@ $productVariant->save();
 
 ---
 
-# 18. Redis
+## 18. Redis
 
 Redis 用於：
 
@@ -519,7 +520,7 @@ Checkout 時，Product price、inventory 等重要資料應重新從 database �
 
 ---
 
-# 19. Cart
+## 19. Cart
 
 Cart 透過 `CartStore` 管理。
 
@@ -540,7 +541,7 @@ Order 建立時應重新從 database 取得商品價格。
 
 ---
 
-# 20. Payment
+## 20. Payment
 
 Payment 是 business-critical operation。
 
@@ -564,7 +565,7 @@ External payment callback 必須經過適當的 authenticity verification。
 
 ---
 
-# 21. ECPay
+## 21. ECPay
 
 本專案整合 ECPay。
 
@@ -602,7 +603,7 @@ External callback field 可能：
 
 ---
 
-# 22. External Callback
+## 22. External Callback
 
 External callback 可能：
 
@@ -627,7 +628,7 @@ External callback 可能：
 
 ---
 
-# 23. Enum
+## 23. Enum
 
 本專案使用 PHP Enum 管理 domain values，例如：
 
@@ -655,7 +656,7 @@ External callback 可能：
 
 ---
 
-# 24. Money
+## 24. Money
 
 Money 是 financial data。
 
@@ -688,7 +689,7 @@ payment amount
 
 ---
 
-# 25. Event / Job
+## 25. Event / Job
 
 本專案使用 Event / Job 處理部分 application side effects。
 
@@ -710,7 +711,7 @@ OrderCreated
 
 ---
 
-# 26. Error Handling
+## 26. Error Handling
 
 遵循既有 API error response 格式。
 
@@ -737,7 +738,7 @@ OrderCreated
 
 ---
 
-# 27. Logging
+## 27. Logging
 
 使用 Laravel / PSR logging。
 
@@ -762,7 +763,7 @@ Logging 不應取代 error handling。
 
 ---
 
-# 28. Database
+## 28. Database
 
 Database schema 修改必須透過 Migration。
 
@@ -782,7 +783,7 @@ Database constraint 是 application correctness 的重要防線。
 
 ---
 
-# 29. Query Performance
+## 29. Query Performance
 
 避免：
 
@@ -803,7 +804,7 @@ Database constraint 是 application correctness 的重要防線。
 
 ---
 
-# 30. API Response Contract
+## 30. API Response Contract
 
 既有 API response structure 視為 application contract。
 
@@ -829,7 +830,7 @@ Database constraint 是 application correctness 的重要防線。
 
 ---
 
-# 31. Testing
+## 31. Testing
 
 本專案使用 PHPUnit。
 
@@ -876,7 +877,7 @@ composer test
 
 ---
 
-# 32. 測試流程
+## 32. 測試流程
 
 修改重要功能之前：
 
@@ -898,7 +899,7 @@ cd ../laradock && docker compose exec --user=laradock workspace bash -lc 'cd /va
 
 ---
 
-# 33. Code Style
+## 33. Code Style
 
 遵循：
 
@@ -924,7 +925,7 @@ cd ../laradock && docker compose exec --user=laradock workspace bash -lc 'cd /va
 
 ---
 
-# 34. Static Analysis
+## 34. Static Analysis
 
 如果 repository 中存在 static analysis tooling，應配合執行。
 
@@ -946,7 +947,7 @@ cd ../laradock && docker compose exec --user=laradock workspace bash -lc 'cd /va
 
 ---
 
-# 35. 命名
+## 35. 命名
 
 遵循現有 domain terminology。
 
@@ -974,7 +975,7 @@ OrderProcessor
 
 ---
 
-# 36. Comments
+## 36. Comments
 
 Comment 應解釋「為什麼」，而不是重複「程式在做什麼」。
 
@@ -992,7 +993,7 @@ Comment 應解釋「為什麼」，而不是重複「程式在做什麼」。
 
 ---
 
-# 37. Security
+## 37. Security
 
 所有 HTTP Request 與 external callback 都必須視為 untrusted input。
 
@@ -1025,7 +1026,7 @@ authorization state
 
 ---
 
-# 38. Rate Limiting
+## 38. Rate Limiting
 
 本專案已有 route-specific throttle。
 
@@ -1037,7 +1038,7 @@ authorization state
 
 ---
 
-# 39. Concurrency
+## 39. Concurrency
 
 本專案是電商 API，因此 concurrency correctness 非常重要。
 
@@ -1076,7 +1077,7 @@ authorization state
 
 ---
 
-# 40. Git 與修改範圍
+## 40. Git 與修改範圍
 
 每次修改應保持 focused。
 
@@ -1094,11 +1095,11 @@ authorization state
 
 ---
 
-# 41. Copilot 工作流程
+## 41. Copilot 工作流程
 
 處理非 trivial feature 時，遵循以下流程。
 
-## Step 1：理解
+### Step 1：理解
 
 先搜尋相關：
 
@@ -1113,8 +1114,9 @@ authorization state
 - Events
 - Jobs
 - Tests
+- `docs/` 中相關的 API 文件、業務規則及測試案例
 
-## Step 2：分析
+### Step 2：分析
 
 在大量修改之前，先確認：
 
@@ -1127,8 +1129,26 @@ authorization state
 - 是否涉及 idempotency。
 - 是否涉及 external callback。
 - 需要增加哪些 tests。
+- 現有文件是否足以描述本次需求。
+- 是否需要新增或更新文件。
 
-## Step 3：實作
+如果文件與實際程式碼或測試存在不一致，應先釐清差異，不可直接假設其中一方一定正確。
+
+如果業務需求不明確，而且可能影響 correctness，應先詢問使用者。
+
+### Step 3：規劃測試
+
+採用 Outside-in TDD 的開發精神。
+
+1. 先確認 API 對外應有的行為。
+2. 根據業務規則及測試案例文件整理測試情境。
+3. 先建立或修改適當的 Feature Test。
+4. 視需要建立或修改 Unit Test。
+5. 確認測試能夠涵蓋正常、異常及重要邊界情境。
+
+不要自行猜測未定義的 business rules，也不要為了增加測試數量而撰寫沒有實際價值的測試。
+
+### Step 4：實作
 
 遵循：
 
@@ -1138,7 +1158,7 @@ authorization state
 
 不要在沒有必要的情況下新增 architecture。
 
-## Step 4：測試
+### Step 5：測試
 
 新增或修改適當 PHPUnit tests。
 
@@ -1146,7 +1166,28 @@ authorization state
 
 所有 PHP / Composer / Artisan 指令必須依照第 2 節的 Laradock `workspace` 規則執行。
 
-## Step 5：Review
+### Step 6：文件同步
+
+檢查本次修改是否影響：
+
+- API 業務規則。
+- API Request / Response。
+- HTTP Status Code。
+- Authentication / Authorization。
+- API 測試情境。
+- Error handling。
+- Idempotency。
+- Transaction。
+- Concurrency。
+- External callback behavior。
+
+如果上述內容有變更，必須同步更新 `docs/` 中相關文件。
+
+如果新增 API，應建立對應的 API 文件及必要的測試案例文件。
+
+如果只是內部重構，且 API 對外行為與業務規則均未改變，則不需要為了形式而修改文件。
+
+### Step 7：Review
 
 完成後檢查：
 
@@ -1159,11 +1200,12 @@ authorization state
 - Error handling
 - Query performance
 - Test coverage
+- Documentation consistency
 - Unrelated changes
 
 ---
 
-# 42. 不可假設不存在的程式結構
+## 42. 不可假設不存在的程式結構
 
 不要假設某個 class、file、service、repository、event、job、policy、middleware 或 package 一定存在。
 
@@ -1179,7 +1221,7 @@ authorization state
 
 ---
 
-# 43. 遇到不明確需求時
+## 43. 遇到不明確需求時
 
 如果需求資訊不足，而且可能影響 correctness：
 
@@ -1198,7 +1240,7 @@ authorization state
 
 ---
 
-# 44. 不要自動「改善」既有程式碼
+## 44. 不要自動「改善」既有程式碼
 
 如果現有程式碼看起來與一般 Laravel best practice 不同：
 
@@ -1215,7 +1257,7 @@ authorization state
 
 ---
 
-# 45. 最終檢查清單
+## 45. 最終檢查清單
 
 完成任何重要功能後，確認：
 
@@ -1240,7 +1282,217 @@ authorization state
 - [ ] Relevant tests 已實際執行。
 - [ ] Laravel Pint 已檢查。
 - [ ] 所有 PHP / Composer / Artisan 指令均在 Laradock `workspace` container 中執行。
+- [ ] 相關 API 業務規則文件已閱讀。
+- [ ] 相關測試案例文件已閱讀。
+- [ ] API 行為或業務規則有變更時，`docs/` 已同步更新。
+- [ ] 文件與實際 API 行為及 PHPUnit tests 一致。
 - [ ] 沒有修改無關檔案。
 - [ ] 沒有任意新增 package。
 - [ ] 沒有任意改變既有 API。
 - [ ] 沒有任意改變既有 database constraint。
+
+---
+
+## 46. Documentation Management
+
+本專案使用 GitHub Markdown 管理 API 文件。
+
+所有正式的 API 業務規則、API 測試案例及系統架構文件，應放置於 Repository 根目錄的 `docs/` 目錄。
+
+建議目錄結構：
+
+```text
+docs/
+├── api/
+│   ├── authentication.md
+│   ├── products.md
+│   ├── orders.md
+│   └── payments.md
+├── business-rules/
+│   ├── order-rules.md
+│   └── inventory-rules.md
+├── test-cases/
+│   ├── products.md
+│   ├── orders.md
+│   └── payments.md
+└── architecture.md
+```
+
+以上僅為建議結構。
+
+新增文件前，必須先檢查是否已有適當的文件可以擴充，避免建立重複或內容過於零散的文件。
+
+### 46.1 API 文件
+
+每個重要 API 或 API resource 應有適當的文件。
+
+API 文件應視需求包含：
+
+- API Endpoint。
+- HTTP Method。
+- API 用途。
+- Authentication requirement。
+- Authorization requirement。
+- Request Parameters。
+- Request Body。
+- Response Structure。
+- HTTP Status Codes。
+- Validation Rules。
+- 相關 Business Rules。
+- 重要的 Error Handling。
+
+文件應描述 API 的對外行為及使用方式。
+
+不要將 Controller、Service、Repository 的完整實作內容直接複製到 API 文件。
+
+### 46.2 Business Logic 文件
+
+重要的 business rules 應整理於 `docs/business-rules/`。
+
+例如：
+
+- Order 建立條件。
+- Inventory 扣除規則。
+- Order cancellation 規則。
+- Payment state transition。
+- Shipment state transition。
+- Idempotency。
+- Checkout concurrency。
+- External callback handling。
+
+Business Logic 文件應描述：
+
+1. 業務目的。
+2. 前置條件。
+3. 業務規則。
+4. 正常處理流程。
+5. 異常處理流程。
+6. 預期結果。
+7. 必要時的 Transaction / Concurrency considerations。
+
+文件應以業務需求及系統預期行為為核心，而不是描述程式碼目前如何實作。
+
+### 46.3 API Test Cases 文件
+
+重要 API 應具有對應的測試案例文件，放置於 `docs/test-cases/`。
+
+測試案例應依 API 的實際需求規劃，至少考慮：
+
+- Happy path。
+- Validation failure。
+- Authentication failure。
+- Authorization failure。
+- Resource not found。
+- Business rule failure。
+- Boundary conditions。
+- Duplicate request。
+- Idempotency。
+- External service failure。
+- Transaction rollback。
+- Concurrency-sensitive behavior。
+
+每個測試案例應盡可能包含：
+
+| 項目 | 說明 |
+|---|---|
+| Test Scenario | 測試情境 |
+| Preconditions | 測試前置條件 |
+| Input | Request 或測試輸入 |
+| Expected Result | 預期結果 |
+| Database State | 預期資料庫狀態，視需求提供 |
+
+不是每個 API 都需要測試上述所有情境。
+
+應根據實際業務需求及風險決定測試範圍，不要為了增加測試數量而加入沒有實際價值的測試案例。
+
+### 46.4 文件與 PHPUnit Tests 的關係
+
+文件中的測試案例應與實際 PHPUnit Feature Test / Unit Test 保持一致。
+
+兩者的責任不同：
+
+- Documentation：描述應該驗證哪些行為，以及預期結果。
+- PHPUnit Tests：實際驗證程式是否符合這些預期行為。
+- Application Code：實作符合需求的功能。
+
+不要將 PHPUnit 測試程式碼直接複製到 Markdown 文件。
+
+也不要只因為某個 PHPUnit Test 已經存在，就假設所有重要 business rules 都已經有適當的測試案例。
+
+如果發現文件與 PHPUnit Tests 不一致，應確認實際需求，並同步修正文件或測試。
+
+### 46.5 文件讀取規則
+
+新增或修改 API、Service 或重要 business logic 之前：
+
+1. 搜尋 `docs/` 中相關 API 文件。
+2. 閱讀相關 Business Logic 文件。
+3. 閱讀相關 Test Cases 文件。
+4. 對照目前實際程式碼及 PHPUnit Tests。
+5. 確認本次需求是否涉及既有文件所描述的行為。
+
+如果找不到相關文件，不代表該業務規則不存在。
+
+應繼續檢查現有程式碼、測試及使用者提供的需求，不可自行猜測 business rules。
+
+### 46.6 文件更新規則
+
+以下情況必須評估並同步更新相關文件：
+
+- 新增 API。
+- 修改 API Request / Response。
+- 修改 HTTP Status Code。
+- 修改 Validation Rules。
+- 修改 Authentication / Authorization。
+- 修改 Business Rules。
+- 修改 Error Handling。
+- 修改 Idempotency behavior。
+- 修改 Transaction behavior。
+- 修改 Concurrency handling。
+- 修改 External callback behavior。
+- 新增或修改重要的測試情境。
+
+如果修改只涉及內部實作，而且不影響 API contract、Business Rules 或預期行為，則不需要修改文件。
+
+不要為了形式而重複建立文件。
+
+### 46.7 文件正確性
+
+文件必須以已確認的需求及預期系統行為為依據。
+
+不要：
+
+- 自行創造未經確認的 business rules。
+- 將目前的程式碼實作直接視為正確的業務需求。
+- 將尚未實作的功能描述為已完成。
+- 記錄未經確認的 API response。
+- 為了讓文件看起來完整而猜測測試結果。
+- 將過時的 API behavior 保留在文件中。
+
+如果需求不明確，應先詢問使用者。
+
+如果發現文件、測試及程式碼三者存在差異，應先釐清正確的預期行為，再進行修改。
+
+### 46.8 文件版本控制
+
+`docs/` 應納入 Git 版本控制。
+
+文件與相關程式碼應盡可能在同一次 feature modification 中一起提交。
+
+不要將 `docs/` 加入 `.gitignore`。
+
+修改文件時，應維持 Markdown 格式清晰、標題層級一致、表格容易閱讀。
+
+不要為了文件格式而引入不必要的第三方工具或套件。
+
+### 46.9 OpenAPI
+
+如果專案已經存在 OpenAPI Specification，修改 API contract 時應同步檢查及更新相關 OpenAPI 文件。
+
+如果專案尚未建立 OpenAPI Specification，不應因為單純新增或修改 API 就任意引入新的套件或文件工具。
+
+是否建立 OpenAPI Specification，應依照實際 API 文件需求決定。
+
+OpenAPI 主要負責 API technical contract，而 `docs/` 中的 Business Logic 及 Test Cases 文件則負責描述業務規則及測試情境。
+
+兩者不應互相取代。

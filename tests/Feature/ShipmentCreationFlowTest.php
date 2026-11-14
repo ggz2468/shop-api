@@ -13,8 +13,10 @@ use App\Models\Shipment;
 use App\Notifications\ShipmentCreatedNotification;
 use Illuminate\Foundation\Testing\RefreshDatabase;
 use Illuminate\Http\Client\Request;
+use Illuminate\Support\Facades\DB;
 use Illuminate\Support\Facades\Http;
 use Illuminate\Support\Facades\Notification;
+use PHPUnit\Framework\Attributes\DataProvider;
 use Tests\TestCase;
 
 class ShipmentCreationFlowTest extends TestCase
@@ -69,6 +71,66 @@ class ShipmentCreationFlowTest extends TestCase
             ShipmentCreatedNotification::class,
             fn (ShipmentCreatedNotification $notification): bool => $notification->toArray($shipment->order->member)['tracking_number'] === '123456789',
         );
+    }
+
+    /**
+     * 物流建立交易: 提交前不得送單或通知；提交後才送單，rollback 則不得留下物流或外部副作用。
+     */
+    #[DataProvider('shipmentTransactionOutcomeProvider')]
+    public function test_shipment_submission_and_notification_wait_for_transaction_commit(bool $commit): void
+    {
+        Notification::fake();
+        Http::preventStrayRequests();
+        Http::fake([
+            'https://logistics-stage.ecpay.com.tw/Express/Create' => Http::response(
+                '1|RtnCode=1&RtnMsg=OK&AllPayLogisticsID=123456789',
+                200,
+            ),
+        ]);
+        $this->setValidShipmentConfig();
+        $order = Order::factory()->create([
+            'shipping_method' => OrderShippingMethod::CONVENIENCE_STORE->value,
+            'store_type' => OrderStoreType::UNIMART->value,
+            'store_code' => 'UNIMART001',
+            'store_name' => '信義門市',
+            'store_address' => '台北市信義區測試路 1 號',
+        ]);
+        $payment = PaymentTransaction::factory()->for($order)->create();
+        $baseline = DB::transactionLevel();
+        DB::beginTransaction();
+
+        try {
+            PaymentSucceeded::dispatch($payment->id);
+
+            $this->assertSame(ShipmentStatus::PENDING->value, $order->shipments()->sole()->status);
+            Http::assertNothingSent();
+            Notification::assertNothingSent();
+
+            if ($commit) {
+                DB::commit();
+                Http::assertSentCount(1);
+                $shipment = $order->shipments()->sole();
+                $this->assertSame(ShipmentStatus::CREATED->value, $shipment->status);
+                Notification::assertSentTo($order->member, ShipmentCreatedNotification::class);
+            } else {
+                DB::rollBack();
+                $this->assertSame(0, $order->shipments()->count());
+                Http::assertNothingSent();
+                Notification::assertNothingSent();
+            }
+        } finally {
+            while (DB::transactionLevel() > $baseline) {
+                DB::rollBack();
+            }
+        }
+    }
+
+    public static function shipmentTransactionOutcomeProvider(): array
+    {
+        return [
+            'committed shipment' => [true],
+            'rolled back shipment' => [false],
+        ];
     }
 
     private function setValidShipmentConfig(): void

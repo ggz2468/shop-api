@@ -7,10 +7,10 @@ use App\Events\ShipmentMarkedAsCreated;
 use App\Models\Shipment;
 use App\Notifications\ShipmentCreatedNotification;
 use App\Repositories\ShipmentRepository;
-use Illuminate\Contracts\Queue\ShouldQueue;
+use Illuminate\Contracts\Queue\ShouldQueueAfterCommit;
 use Illuminate\Database\Eloquent\ModelNotFoundException;
 
-class SendShipmentCreatedNotification implements ShouldQueue
+class SendShipmentCreatedNotification implements ShouldQueueAfterCommit
 {
     /**
      * @return void

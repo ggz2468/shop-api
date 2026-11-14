@@ -52,6 +52,13 @@ class OrderController extends Controller
         return new OrderDetailResource($order);
     }
 
+    public function cancel(Request $request, Order $order): JsonResponse
+    {
+        $result = $this->orderService->cancelOrder((int) $request->user()->id, (int) $order->id);
+
+        return response()->json(['message' => $result['message']], $result['status']);
+    }
+
     /**
      * 建立訂單
      */

@@ -2,19 +2,22 @@
 
 namespace App\Listeners;
 
+use App\Enums\Order\Status as OrderStatus;
+use App\Enums\Shipment\Status as ShipmentStatus;
 use App\Events\ShipmentCreated;
 use App\Events\ShipmentFailed;
 use App\Events\ShipmentRequestPayloadBuilt;
+use App\Models\Order;
 use App\Models\Shipment;
 use App\Repositories\ShipmentRepository;
 use Illuminate\Contracts\Events\Dispatcher;
-use Illuminate\Contracts\Queue\ShouldQueue;
+use Illuminate\Contracts\Queue\ShouldQueueAfterCommit;
 use Illuminate\Database\Eloquent\ModelNotFoundException;
 use Illuminate\Http\Client\Factory as HttpFactory;
 use Psr\Log\LoggerInterface;
 use RuntimeException;
 
-class SubmitShipmentRequest implements ShouldQueue
+class SubmitShipmentRequest implements ShouldQueueAfterCommit
 {
     /**
      * @return void
@@ -34,59 +37,70 @@ class SubmitShipmentRequest implements ShouldQueue
             throw new ModelNotFoundException("Shipment not found with ID {$event->shipmentId}");
         }
 
-        if (! $this->isShipmentRequestPayloadReady($shipment)) {
-            throw new RuntimeException('Shipment request payload is not ready.');
-        }
+        // Keep cancellation excluded through provider submission and the resulting local state update.
+        $shipment->getConnection()->transaction(function () use ($shipment): void {
+            $order = Order::query()->lockForUpdate()->findOrFail($shipment->order_id);
+            $shipment->refresh();
 
-        if (! $this->isShipmentCheckoutPayloadReady($shipment)) {
-            throw new RuntimeException('Shipment checkout payload is not ready.');
-        }
+            if ($order->status === OrderStatus::CANCELED->value
+                || $shipment->status !== ShipmentStatus::PENDING->value) {
+                return;
+            }
 
-        $checkoutPayload = $shipment->checkout_payload;
-        $requestMethod = trim(strtolower($checkoutPayload['method']));
-        $requestUrl = trim($checkoutPayload['action']);
-        $response = $this->http
-            ->asForm()
-            ->$requestMethod($requestUrl, $shipment->request_payload);
+            if (! $this->isShipmentRequestPayloadReady($shipment)) {
+                throw new RuntimeException('Shipment request payload is not ready.');
+            }
 
-        if (! $response->ok()) {
-            $this->logger->warning('Shipment request HTTP error.', [
-                'shipment_id' => $shipment->id,
-            ]);
-            $this->events->dispatch(new ShipmentFailed($shipment->id, "HTTP {$response->status()}", [
-                'error_type' => 'http_error',
-                'http_status' => $response->status(),
-                'body' => $response->body(),
-            ]));
+            if (! $this->isShipmentCheckoutPayloadReady($shipment)) {
+                throw new RuntimeException('Shipment checkout payload is not ready.');
+            }
 
-            return;
-        }
+            $checkoutPayload = $shipment->checkout_payload;
+            $requestMethod = trim(strtolower($checkoutPayload['method']));
+            $requestUrl = trim($checkoutPayload['action']);
+            $response = $this->http
+                ->asForm()
+                ->$requestMethod($requestUrl, $shipment->request_payload);
 
-        $providerPayload = $this->parseEcpayResponse($response->body());
-        $rtnCode = $providerPayload['RtnCode'] ?? null;
+            if (! $response->ok()) {
+                $this->logger->warning('Shipment request HTTP error.', [
+                    'shipment_id' => $shipment->id,
+                ]);
+                $this->events->dispatch(new ShipmentFailed($shipment->id, "HTTP {$response->status()}", [
+                    'error_type' => 'http_error',
+                    'http_status' => $response->status(),
+                    'body' => $response->body(),
+                ]));
 
-        if ($rtnCode === null) {
-            $providerPayload = [
-                'error_type' => 'invalid_provider_response',
-                'body' => $response->body(),
-                'parsed_payload' => $providerPayload,
-            ];
+                return;
+            }
 
-            $this->logger->warning('Shipment request returned invalid provider response.', [
+            $providerPayload = $this->parseEcpayResponse($response->body());
+            $rtnCode = $providerPayload['RtnCode'] ?? null;
+
+            if ($rtnCode === null) {
+                $providerPayload = [
+                    'error_type' => 'invalid_provider_response',
+                    'body' => $response->body(),
+                    'parsed_payload' => $providerPayload,
+                ];
+
+                $this->logger->warning('Shipment request returned invalid provider response.', [
+                    'shipment_id' => $shipment->id,
+                    'provider_payload' => $providerPayload,
+                ]);
+                $this->events->dispatch(new ShipmentFailed($shipment->id, 'Invalid shipment provider response.', $providerPayload));
+
+                return;
+            }
+
+            $this->logger->info('Shipment request is submitted.', [
                 'shipment_id' => $shipment->id,
                 'provider_payload' => $providerPayload,
             ]);
-            $this->events->dispatch(new ShipmentFailed($shipment->id, 'Invalid shipment provider response.', $providerPayload));
 
-            return;
-        }
-
-        $this->logger->info('Shipment request is submitted.', [
-            'shipment_id' => $shipment->id,
-            'provider_payload' => $providerPayload,
-        ]);
-
-        $this->events->dispatch(new ShipmentCreated($shipment->id, $providerPayload));
+            $this->events->dispatch(new ShipmentCreated($shipment->id, $providerPayload));
+        });
     }
 
     private function isShipmentRequestPayloadReady(Shipment $shipment): bool

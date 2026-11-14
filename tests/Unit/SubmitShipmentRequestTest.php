@@ -2,11 +2,13 @@
 
 namespace Tests\Unit;
 
+use App\Enums\Order\Status as OrderStatus;
 use App\Enums\Shipment\Status;
 use App\Events\ShipmentCreated;
 use App\Events\ShipmentFailed;
 use App\Events\ShipmentRequestPayloadBuilt;
 use App\Listeners\SubmitShipmentRequest;
+use App\Models\Order;
 use App\Models\Shipment;
 use App\Repositories\ShipmentRepository;
 use Illuminate\Contracts\Events\Dispatcher;
@@ -18,6 +20,7 @@ use Illuminate\Http\Client\Request;
 use Illuminate\Support\Facades\Event;
 use Illuminate\Support\Facades\Http;
 use Mockery;
+use PHPUnit\Framework\Attributes\DataProvider;
 use Psr\Log\LoggerInterface;
 use RuntimeException;
 use Tests\TestCase;
@@ -332,6 +335,59 @@ class SubmitShipmentRequestTest extends TestCase
                 ],
         );
         Event::assertNotDispatched(ShipmentCreated::class);
+    }
+
+    /**
+     * ShipmentRequestPayloadBuilt: 已取消訂單或非待建立物流即使有完整 payload，也不得送單、派送結果事件或改寫資料。
+     */
+    #[DataProvider('ineligibleShipmentSubmissionProvider')]
+    public function test_handle_does_not_submit_or_dispatch_events_for_ineligible_shipment(int $orderStatus, int $shipmentStatus): void
+    {
+        Event::fake([ShipmentCreated::class, ShipmentFailed::class]);
+        Http::preventStrayRequests();
+        Http::fake([
+            'https://logistics-stage.ecpay.com.tw/Express/Create' => Http::response(
+                '1|RtnCode=1&RtnMsg=OK&AllPayLogisticsID=123456789',
+                200,
+            ),
+        ]);
+        $order = Order::factory()->create(['status' => $orderStatus]);
+        $shipment = Shipment::factory()->for($order)->create([
+            'status' => $shipmentStatus,
+            'request_payload' => [
+                'MerchantID' => '2000132',
+                'MerchantTradeNo' => $order->number,
+                'CheckMacValue' => 'CHECK_MAC_VALUE',
+            ],
+            'checkout_payload' => [
+                'action' => 'https://logistics-stage.ecpay.com.tw/Express/Create',
+                'method' => 'POST',
+            ],
+        ]);
+        $orderBefore = $order->refresh()->getAttributes();
+        $shipmentBefore = $shipment->refresh()->getAttributes();
+
+        $this->makeListener(app(LoggerInterface::class))->handle(new ShipmentRequestPayloadBuilt($shipment->id));
+
+        Http::assertNothingSent();
+        Event::assertNotDispatched(ShipmentCreated::class);
+        Event::assertNotDispatched(ShipmentFailed::class);
+        $this->assertSame($orderBefore, $order->refresh()->getAttributes());
+        $this->assertSame($shipmentBefore, $shipment->refresh()->getAttributes());
+    }
+
+    public static function ineligibleShipmentSubmissionProvider(): array
+    {
+        $cases = [
+            'canceled order with pending shipment' => [OrderStatus::CANCELED->value, Status::PENDING->value],
+        ];
+        foreach (Status::cases() as $status) {
+            if ($status !== Status::PENDING) {
+                $cases["stocking order with {$status->name} shipment"] = [OrderStatus::STOCKING->value, $status->value];
+            }
+        }
+
+        return $cases;
     }
 
     private function makeListener(LoggerInterface $logger): SubmitShipmentRequest
