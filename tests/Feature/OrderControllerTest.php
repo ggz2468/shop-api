@@ -2029,6 +2029,84 @@ class OrderControllerTest extends TestCase
     }
 
     /**
+     * 建立訂單: 第一項商品已扣庫存後遇到後續商品失敗或真實 SQL 錯誤，應完整 rollback 且保留購物車。
+     */
+    #[DataProvider('checkoutRollbackProvider')]
+    public function test_store_rolls_back_partial_checkout_without_leaving_orders_details_or_payments(string $failure): void
+    {
+        config()->set('app.debug', false);
+        config()->set('cache.default', 'array');
+        Event::fake([OrderCreated::class]);
+        $member = Member::factory()->create();
+        Sanctum::actingAs($member);
+        $first = ProductVariant::factory()->create(['stock_quantity' => 5]);
+        $second = ProductVariant::factory()->create(['stock_quantity' => $failure === 'insufficient-second' ? 1 : 7]);
+        app(CartStore::class)->storeItem($member->id, $second->id, 2);
+        app(CartStore::class)->storeItem($member->id, $first->id, 2);
+        if ($failure === 'missing-second') {
+            $second->delete();
+        }
+        $cartBefore = app(CartStore::class)->getItems($member->id);
+        $firstBefore = $first->refresh()->getAttributes();
+        $secondBefore = $second->fresh()?->getAttributes();
+        $baseline = DB::transactionLevel();
+        $stockWrites = 0;
+        $injected = false;
+        $target = match ($failure) {
+            'sql-after-stock' => 'product_variants',
+            'sql-after-order' => 'orders',
+            'sql-after-details' => 'order_details',
+            default => null,
+        };
+        DB::listen(function (QueryExecuted $query) use ($target, &$stockWrites, &$injected, $baseline): void {
+            if (preg_match('/^update [`"]?product_variants[`"]?\s/i', $query->sql)) {
+                $stockWrites++;
+                $this->assertGreaterThan($baseline, $query->connection->transactionLevel());
+            }
+            if ($target !== null && ! $injected && preg_match('/^(?:update|insert into) [`"]?'.preg_quote($target, '/').'[`"]?\s/i', $query->sql)) {
+                $injected = true;
+                $query->connection->statement('UPDATE orders SET checkout_test_missing_column = 1 WHERE id = ?', [-1]);
+            }
+        });
+
+        $response = $this->postJson('/api/orders', [
+            'payment_method' => PaymentMethod::CREDIT_CARD->value,
+            'shipping_method' => ShippingMethod::HOME_DELIVERY->value,
+            'recipient_name' => '王小明',
+            'recipient_phone' => '0912345678',
+            'recipient_zip_code' => '100',
+            'recipient_address' => '台北市信義區測試路 1 號',
+        ], ['Idempotency-Key' => 'checkout-rollback-'.$failure]);
+
+        $response->assertStatus($target === null ? 409 : 503)
+            ->assertJsonStructure(['message'])
+            ->assertJsonMissingPath('exception')
+            ->assertJsonMissingPath('trace');
+        $this->assertStringNotContainsString('checkout_test_missing_column', $response->getContent());
+        $this->assertSame($target !== null, $injected);
+        $this->assertSame(in_array($failure, ['sql-after-order', 'sql-after-details'], true) ? 2 : 1, $stockWrites);
+        $this->assertSame($baseline, DB::transactionLevel());
+        $this->assertSame($firstBefore, $first->refresh()->getAttributes());
+        $this->assertSame($secondBefore, $second->fresh()?->getAttributes());
+        $this->assertSame(0, $member->orders()->count());
+        $this->assertDatabaseCount('order_details', 0);
+        $this->assertDatabaseCount('payment_transactions', 0);
+        $this->assertSame($cartBefore, app(CartStore::class)->getItems($member->id));
+        Event::assertNotDispatched(OrderCreated::class);
+    }
+
+    public static function checkoutRollbackProvider(): array
+    {
+        return [
+            'second product insufficient' => ['insufficient-second'],
+            'second product missing' => ['missing-second'],
+            'SQL failure after first stock write' => ['sql-after-stock'],
+            'SQL failure after order insert' => ['sql-after-order'],
+            'SQL failure after detail insert' => ['sql-after-details'],
+        ];
+    }
+
+    /**
      * 建立訂單: 購物車為空時應回傳 409。
      */
     public function test_store_returns_409_when_cart_is_empty(): void

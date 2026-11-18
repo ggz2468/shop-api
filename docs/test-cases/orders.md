@@ -1,5 +1,197 @@
 # 訂單測試案例
 
+## 建立訂單
+
+**API Endpoint：** `POST /api/orders`
+
+以下表格列出已實作的測試契約，涵蓋身份驗證、參數、建單結果、付款事件、冪等、rollback、並行及限流。建立 API 與所列測試已實作；執行紀錄見本節第 7 節。
+
+- API 規格：[docs/api/orders.md](../api/orders.md)
+- 業務規則：[docs/business-rules/order-rules.md](../business-rules/order-rules.md)
+- 一般測試：[tests/Feature/OrderControllerTest.php](../../tests/Feature/OrderControllerTest.php)
+- 並行測試：[tests/Feature/OrderCreationConcurrencyTest.php](../../tests/Feature/OrderCreationConcurrencyTest.php)
+- 跨取消流程並行測試：[tests/Feature/OrderCancellationConcurrencyTest.php](../../tests/Feature/OrderCancellationConcurrencyTest.php)
+- Service 局部測試：[tests/Unit/OrderServiceTest.php](../../tests/Unit/OrderServiceTest.php)
+
+### 1. 身份、Header 與建立參數
+
+下表方法皆位於 [tests/Feature/OrderControllerTest.php](../../tests/Feature/OrderControllerTest.php)。參數驗證案例以 mock 確認不呼叫 `storeOrder()`；不以此宣稱已驗證真實資料庫 rollback。
+
+| 情境 | 預期結果 | 測試方法 |
+|---|---|---|
+| 未登入建立訂單 | `401` | `test_guest_cannot_create_order` |
+| 缺少 Idempotency-Key header | `422`，`errors.idempotency_key` | `test_store_returns_422_when_idempotency_key_header_is_missing` |
+| Idempotency-Key 為 65 個字元 | `422`，`errors.idempotency_key` | `test_store_returns_422_when_idempotency_key_header_is_too_long` |
+| 缺少付款方式 | `422`，`errors.payment_method` | `test_store_returns_422_when_payment_method_is_missing` |
+| 付款方式為 `0`、`99` 或 `abc` | 各輸入皆為 `422`，`errors.payment_method` | `test_store_returns_422_when_payment_method_is_invalid` |
+| 缺少配送方式 | `422`，`errors.shipping_method` | `test_store_returns_422_when_shipping_method_is_missing` |
+| 配送方式為 `0`、`99` 或 `abc` | 各輸入皆為 `422`，`errors.shipping_method` | `test_store_returns_422_when_shipping_method_is_invalid` |
+| 宅配未提供收件人姓名、電話、郵遞區號及地址 | `422`，四個收件欄位皆有 validation error | `test_store_returns_422_when_required_recipient_information_is_missing` |
+| 收件電話為 `091234567`、`0212345678`、`09123456789` 或 `09abcdefgh` | 各輸入皆為 `422`，`errors.recipient_phone` | `test_store_returns_422_when_recipient_phone_format_is_invalid` |
+| 宅配郵遞區號為 `10`、`1000000`、`ABC` 或 `100-01` | 各輸入皆為 `422`，`errors.recipient_zip_code` | `test_store_returns_422_when_home_delivery_recipient_zip_code_format_is_invalid` |
+| 宅配地址只有空白 | `422`，`errors.recipient_address` | `test_store_returns_422_when_home_delivery_recipient_address_is_blank` |
+| 收件姓名 51 字、宅配地址 501 字 | `422`，姓名及地址皆有 validation error | `test_store_returns_422_when_recipient_information_exceeds_max_length` |
+| 超商取貨缺少門市類型、代碼、名稱及地址 | `422`，四個門市欄位皆有 validation error | `test_store_returns_422_when_store_information_is_missing_for_convenience_store_shipping` |
+| 門市類型為 `UNKNOWN` | `422`，`errors.store_type` | `test_store_returns_422_when_store_type_is_invalid` |
+| 門市代碼 33 字、名稱 51 字、地址 501 字 | `422`，三個門市欄位皆有 validation error | `test_store_returns_422_when_store_information_exceeds_max_length` |
+
+### 2. 成功結果、冪等與 rollback
+
+#### HTTP 回應映射
+
+下表位於 [tests/Feature/OrderControllerTest.php](../../tests/Feature/OrderControllerTest.php)，以 mock Service 驗證 Controller 傳入登入會員、Header、配送／收件資料及 HTTP 回應，不驗證實際建單或金額計算。
+
+| 情境 | 預期結果 | 測試方法 |
+|---|---|---|
+| 已登入會員使用宅配建立訂單 | 傳入登入會員 ID 與已驗證資料；Service 回傳 `201` 時保留 message、訂單編號、付款方式及明細 | `test_store_creates_order_for_authenticated_member` |
+| 超商取貨未提供收件郵遞區號與地址 | 可呼叫 Service，兩個收件欄位為 null，門市資料完整；回傳 `201` | `test_store_allows_convenience_store_shipping_without_recipient_address` |
+| Service 回傳同 key 的既有訂單 | `200`、「訂單已存在。」及原訂單編號 | `test_store_returns_existing_order_when_idempotency_key_was_already_used` |
+| Service 回傳空購物車 | `409`、「購物車沒有可建立訂單的產品。」 | `test_store_returns_409_when_cart_is_empty` |
+| Service 回傳庫存不足 | `409`、「產品庫存不足。」 | `test_store_returns_409_when_product_stock_is_insufficient` |
+| Service 回傳暫時性建單失敗 | `503`、「訂單建立失敗，請稍後再試。」 | `test_store_returns_503_when_order_service_cannot_create_order` |
+
+#### 真實建單、快照與付款事件
+
+下表位於 [tests/Feature/OrderControllerTest.php](../../tests/Feature/OrderControllerTest.php)，通過 HTTP 入口呼叫實際 Service／Repository。只驗證建單時派送事件的案例會 fake `OrderCreated`；付款事件鏈案例則保留真實事件並 fake 通知。
+
+| 情境 | 預期結果 | 測試方法 |
+|---|---|---|
+| 超商取貨，商品單價 800、購買 2、初始庫存 5 | `201`；訂單備貨中／未付款，商品與門市快照正確；總額 1,600、稅額 77、運費 0；庫存 3、購物車清空、派送對應 OrderCreated | `test_store_persists_order_details_decrements_stock_clears_cart_and_dispatches_order_created` |
+| 信用卡宅配，透過真實 OrderCreated／PaymentInitiated 事件鏈 | `201`；建立 ECPay 待付款交易，金額等於訂單總額，付款方式為信用卡；request 含商店交易編號、ChoosePayment 與 CheckMacValue；checkout 使用 POST 及設定的付款網址，response payload 為 null；通知會員 | `test_store_builds_payment_checkout_payload_through_events` |
+| ATM 付款 | `201`；建立 ECPay、ATM、PENDING 交易，回應付款方式正確 | `test_store_creates_payment_transaction_with_matching_provider_for_non_credit_card_payment_methods`，ATM |
+| 超商代碼付款 | `201`；建立 ECPay、CVS、PENDING 交易，回應付款方式正確 | `test_store_creates_payment_transaction_with_matching_provider_for_non_credit_card_payment_methods`，CVS |
+| 超商條碼付款 | `201`；建立 ECPay、BARCODE、PENDING 交易，回應付款方式正確 | `test_store_creates_payment_transaction_with_matching_provider_for_non_credit_card_payment_methods`，BARCODE |
+| 同會員、相同 key 先後建立兩次；初始庫存 5、購買 2 | `201`／`200` 且為同一訂單，資料庫僅一筆該會員／key 訂單，庫存 3，OrderCreated 僅派送一次 | `test_store_real_checkout_is_idempotent_for_same_member_and_key` |
+| 購物車包含不存在的商品規格 | `409`、「購物車包含不存在的產品。」；不建立訂單，不派送 OrderCreated | `test_store_real_checkout_returns_409_when_cart_contains_missing_product_variant` |
+| 單項商品庫存 1、購買 2 | `409`、「產品庫存不足。」；庫存仍為 1，不建立訂單，不派送 OrderCreated | `test_store_real_checkout_returns_409_when_stock_is_insufficient` |
+
+#### 部分寫入後完整 rollback
+
+下表皆對應 [tests/Feature/OrderControllerTest.php](../../tests/Feature/OrderControllerTest.php) 的 `test_store_rolls_back_partial_checkout_without_leaving_orders_details_or_payments`。購物車以反序加入兩項商品、各購買 2，第一項庫存為 5，第二項除不足案例外為 7。每個案例皆驗證資料庫原始欄位快照、購物車及 transaction depth，且不洩漏 exception、trace 或注入的內部欄位名稱。
+
+| 情境 | 預期結果 | 測試方法 |
+|---|---|---|
+| 第一項已扣庫存，第二項僅有 1 件 | `409`；確認曾執行一筆庫存 UPDATE；兩項庫存還原，無訂單、明細、付款及事件，購物車不變 | `test_store_rolls_back_partial_checkout_without_leaving_orders_details_or_payments`，`second product insufficient` |
+| 第二項加入購物車後刪除，第一項已扣庫存 | `409`；確認曾執行一筆庫存 UPDATE；第一項庫存還原、第二項維持刪除狀態，無訂單、明細、付款及事件，購物車不變 | `test_store_rolls_back_partial_checkout_without_leaving_orders_details_or_payments`，`second product missing` |
+| 第一項庫存 UPDATE 成功後注入真實 SQL 錯誤 | `503`；確認曾執行一筆庫存 UPDATE；庫存完整還原，無訂單、明細、付款及事件，購物車不變 | `test_store_rolls_back_partial_checkout_without_leaving_orders_details_or_payments`，`SQL failure after first stock write` |
+| 兩項庫存已扣、訂單 INSERT 成功後注入 SQL 錯誤 | `503`；確認曾執行兩筆庫存 UPDATE；庫存及訂單 rollback，無明細、付款及事件，購物車不變 | `test_store_rolls_back_partial_checkout_without_leaving_orders_details_or_payments`，`SQL failure after order insert` |
+| 兩項庫存、訂單及明細已寫入，清空購物車前注入 SQL 錯誤 | `503`；確認曾執行兩筆庫存 UPDATE；庫存、訂單與明細 rollback，無付款及事件，購物車不變 | `test_store_rolls_back_partial_checkout_without_leaving_orders_details_or_payments`，`SQL failure after detail insert` |
+
+SQL 故障是在成功寫入後由 query listener 注入的真實 MySQL 例外，不 mock Repository 回傳值；庫存寫入必須位於 Service 自己的 transaction 內，不能只依賴 RefreshDatabase 的外層交易。
+
+#### Service 局部測試
+
+以下方法皆位於 [tests/Unit/OrderServiceTest.php](../../tests/Unit/OrderServiceTest.php)。沿用專案 Unit 目錄慣例，但部分使用真實資料庫，部分以 mock 驗證內部分支；不將 mock 例外或回傳值視為真實並行證明。
+
+| 情境 | 預期結果 | 測試方法 |
+|---|---|---|
+| 真實建立超商取貨訂單，單價 800、數量 2、庫存 5 | `201`；編號符合固定日期及 6 碼大寫英數字格式；總額 1,600、稅額 77、免運；商品及門市快照、明細正確，庫存 3、清空購物車並派送事件 | `test_store_order_creates_order_details_decrements_stock_clears_cart_and_dispatches_event` |
+| 小計 600，低於免運門檻 | `201`；運費 80、總額 680、內含稅額 29 | `test_store_order_adds_shipping_fee_when_items_subtotal_is_below_free_shipping_threshold` |
+| 多商品以反序加入購物車；300 元購買 2、400 元購買 1 | `201`；明細依商品 ID 升冪、庫存分別扣除；小計剛好 1,000，免運、總額 1,000、稅額 48 | `test_store_order_creates_multiple_items_in_product_variant_id_order` |
+| 同會員及 key 已有訂單 | `200`、原訂單 ID，不派送 OrderCreated | `test_store_order_returns_existing_order_when_idempotency_key_already_exists` |
+| Repository 第一次回傳不存在，transaction 內重查回傳既有訂單 | `200`、原訂單 ID；不查商品、不新增訂單、不扣庫存、不派送事件 | `test_store_order_returns_existing_order_when_transaction_recheck_finds_order` |
+| 真實空購物車 | `409`、空購物車訊息；無訂單及事件 | `test_store_order_returns_409_when_cart_is_empty` |
+| 真實購物車含不存在的商品規格 | `409`、商品不存在訊息；無訂單及事件 | `test_store_order_returns_409_when_cart_contains_missing_product_variant` |
+| 真實庫存 1、購買 2 | `409`、庫存不足訊息；庫存不變，無訂單及事件 | `test_store_order_returns_409_when_stock_is_insufficient` |
+| 模擬 atomic decrement 回傳影響筆數 0 | `409`、「產品庫存不足。」 | `test_store_order_returns_409_when_atomic_stock_decrement_fails` |
+| 模擬明細 Repository 回傳 false | `503`、通用建單失敗訊息；此局部案例只斷言回應，不以此宣稱已驗證完整 rollback | `test_store_order_returns_503_when_order_details_cannot_be_created` |
+| 模擬新增時唯一性衝突，重查找到同會員／key 的訂單 | `200`、原訂單 ID，不派送 OrderCreated | `test_store_order_returns_existing_order_when_unique_constraint_collision_finds_existing_order` |
+| 模擬新增時唯一性衝突，重查仍找不到同會員／key 的訂單 | 記錄含 member_id 的 error，回傳 `503`、通用建單失敗訊息 | `test_store_order_returns_503_when_unique_constraint_collision_cannot_find_existing_order` |
+| 模擬非唯一索引的 QueryException | 記錄含 member_id 的 error，回傳 `503`、通用建單失敗訊息 | `test_store_order_returns_503_when_query_exception_is_not_unique_constraint_collision` |
+| 模擬 checkout lock 等待逾時 | 會員專用鎖租期 10 秒、等待 3 秒；`409`、「訂單建立中，請稍後再試。」 | `test_store_order_returns_409_when_checkout_lock_times_out` |
+| 模擬讀取購物車拋出非預期例外 | 記錄含 member_id 的 error，回傳 `503`、通用建單失敗訊息 | `test_store_order_returns_503_when_unexpected_exception_occurs` |
+
+### 3. 真實 Session Cookie 與 CSRF
+
+正式 SPA 的 Session／CSRF 規則與取消訂單一致，參見 [docs/architecture/authentication.md](../architecture/authentication.md)。目前建立訂單的單行程 Feature Test 以 `Sanctum::actingAs()` 驗證身份與業務；並行 HTTP 請求以測試專用 PAT 隔離 Session 鎖，不代表正式 SPA 使用 PAT。
+
+目前未在 `POST /api/orders` 專屬測試中，以真實 Cookie 登入／登出及缺失／偽造 XSRF Token 完整重驗。取消訂單第 3 節的 Session／CSRF 案例只證明該 endpoint 的行為，不列為建立訂單已直接覆蓋的案例。
+
+### 4. 真實資料庫並行測試
+
+以下使用 MySQL、已提交的獨立 fixture connection、多個 PHP process 與明確的 SQL marker／stdin 同步閘門，不以固定 sleep 猜測請求先後。
+
+#### 結帳與結帳
+
+下表位於 [tests/Feature/OrderCreationConcurrencyTest.php](../../tests/Feature/OrderCreationConcurrencyTest.php)。HTTP kernel、Service、付款 Listener 與資料庫更新皆為真實流程；僅 fake 通知並禁止非預期 HTTP，計算 OrderCreated 次數但不 fake 該事件。
+
+| 情境 | 預期結果 | 測試方法 |
+|---|---|---|
+| 同會員、同 key；共用兩商品購物車、各購買 2，初始庫存 5／7；第一請求扣庫存後暫停，第二請求確認取得 checkout lock 失敗並等待 | `201`／`200`、同一訂單；庫存更新依 ID 升冪且各一次，最終 3／5；僅一筆訂單、兩筆明細、一筆待付款交易、一次事件，購物車清空 | `test_same_member_concurrent_checkouts_consume_the_shared_cart_once`，`same member and key` |
+| 相同共用購物車與交錯，但同會員使用不同 key | `201`／`409`；敗方等鎖後遇到空購物車，不執行庫存寫入、不重複建單或派送事件；庫存、明細及付款結果同上 | `test_same_member_concurrent_checkouts_consume_the_shared_cart_once`，`same member with different keys` |
+| 不同會員各購買最後一件；第一方扣庫存但未提交，第二方持有自己的 checkout lock，通過讀取後進入 atomic decrement 競爭 | `201`／`409`；庫存為 0，非目標商品庫存不變；勝方只有一筆訂單、明細、待付款交易及事件，敗方無訂單或事件且購物車保留 | `test_different_members_cannot_both_purchase_the_last_item` |
+
+使用每案例獨立目錄的 file cache，在多個 process 間共享購物車及真實 FileLock。鎖的觀察器只輸出 acquisition 結果，不替換 acquire／release 行為，不使用 process-local array cache 模擬共享鎖。這不等同 Redis backend 的故障或連線整合測試。
+
+fixture 完成後停止子行程，刪除自身資料及 cache 目錄，不全域 flush。同會員不同 key 案例驗證「成功等鎖後遇到空購物車」，不是 process 等鎖逾時；後者僅由第 2 節 Service mock 驗證。
+
+#### 結帳與取消回補
+
+下表位於 [tests/Feature/OrderCancellationConcurrencyTest.php](../../tests/Feature/OrderCancellationConcurrencyTest.php)，與取消訂單第 4 節共用案例，從建單角度列出完整預期。
+
+| 情境 | 預期結果 | 測試方法 |
+|---|---|---|
+| 取消與不同會員 checkout 共用兩商品，雙方各先完成第一筆庫存寫入 | 取消 `200`、checkout `201`；初始 10／20、各回補 2、各購買 3，最終 9／19；商品寫入依 ID 升冪，新訂單及付款交易只建立一次 | `test_cancellation_and_another_members_checkout_preserve_shared_inventory` |
+| 兩商品初始庫存各 1、取消各回補 2、checkout 各購買 3；回補提交後才放行 checkout 的交易內查詢 | 取消 `200`、checkout `201`；使用已提交回補，最終庫存各 0，僅一筆新訂單、兩筆明細、一筆待付款交易 | `test_insufficient_checkout_and_cancellation_use_only_committed_inventory`，回補先提交 |
+| 相同不足庫存 fixture；checkout 已讀到不足，在回補尚未提交時繼續 | checkout `409`，不寫庫存、不建立訂單、明細或付款；取消 `200`，最終庫存各 3 | `test_insufficient_checkout_and_cancellation_use_only_committed_inventory`，先讀到不足 |
+
+這些跨取消案例以 process-local cart 準備不同會員的結帳資料，用來驗證 MySQL 商品鎖與已提交庫存，不用來證明相同會員的共享購物車或 checkout cache lock。
+
+#### 控制案例
+
+下表同樣位於 [tests/Feature/OrderCancellationConcurrencyTest.php](../../tests/Feature/OrderCancellationConcurrencyTest.php)，確認 process 能通過身份驗證、建立購物車並執行建單，不因測試機制失效而誤判。
+
+| 情境 | 預期結果 | 測試方法 |
+|---|---|---|
+| 真實 checkout process，無取消競爭 | `201`，扣兩筆庫存，建立訂單、明細及付款交易 | `test_checkout_process_control_executes_the_real_order_creation_flow` |
+| 交易內訂單查詢前暫停，無取消回補；庫存各 1、購買各 3 | 可正常放行；`409`，庫存及既有付款交易不變，不建立新訂單 | `test_insufficient_checkout_control_synchronizes_stock_reads_without_mutations`，交易內查詢前 |
+| 庫存讀取後暫停，無取消回補；相同不足庫存 | 可正常放行；`409`，庫存及既有付款交易不變，不建立新訂單 | `test_insufficient_checkout_control_synchronizes_stock_reads_without_mutations`，庫存讀取後 |
+
+#### Listener 局部測試
+
+沿用專案慣例放置於 `tests/Unit/`，其中使用真實資料庫的案例嚴格分類屬 database integration test。Gateway payload 案例以 mock 驗證 Listener 職責，不代表真實供應商已收款；同步執行的案例只檢查 Listener 不實作 ShouldQueue。
+
+| 測試檔案 | 情境 | 預期結果 | 測試方法 |
+|---|---|---|---|
+| [tests/Unit/CreatePaymentTransactionTest.php](../../tests/Unit/CreatePaymentTransactionTest.php) | 建立付款交易 Listener 的 queue 契約 | 不實作 ShouldQueue，避免建單後立即取得付款資料時尚未建立交易 | `test_listener_creates_payment_transaction_synchronously` |
+| [tests/Unit/CreatePaymentTransactionTest.php](../../tests/Unit/CreatePaymentTransactionTest.php) | 收到 OrderCreated，訂單總額 1,280、信用卡付款 | 建立 ECPay、TWD、PENDING 交易，金額 1,280、付款方式正確，交易編號符合日期格式；三種 payload 初始為 null，派送 PaymentInitiated | `test_handle_creates_payment_transaction_and_dispatches_payment_initiated` |
+| [tests/Unit/CreatePaymentTransactionTest.php](../../tests/Unit/CreatePaymentTransactionTest.php) | 同日期替兩筆訂單建立付款交易 | 兩個商店交易編號皆符合格式且不相同 | `test_handle_creates_unique_merchant_trade_no_for_each_payment_transaction` |
+| [tests/Unit/CreatePaymentTransactionTest.php](../../tests/Unit/CreatePaymentTransactionTest.php) | 該訂單已有付款交易 | 仍僅一筆交易，不派送 PaymentInitiated | `test_handle_does_not_create_duplicate_payment_transaction_when_one_already_exists` |
+| [tests/Unit/CreatePaymentTransactionTest.php](../../tests/Unit/CreatePaymentTransactionTest.php) | 設定預設 ECPay provider，分別以信用卡／ATM／CVS／BARCODE 建單 | 四種方式皆建立設定的 provider 與對應付款方式 | `test_handle_resolves_provider_from_default_payment_provider_config` |
+| [tests/Unit/CreatePaymentTransactionTest.php](../../tests/Unit/CreatePaymentTransactionTest.php) | OrderCreated 指定不存在訂單 | 拋出 ModelNotFoundException | `test_handle_throws_model_not_found_exception_when_order_is_missing` |
+| [tests/Unit/CreatePaymentTransactionTest.php](../../tests/Unit/CreatePaymentTransactionTest.php) | 已取消訂單收到延遲 OrderCreated | 不建立付款交易、不派送 PaymentInitiated，訂單不變 | `test_handle_does_not_create_payment_or_dispatch_payment_initiated_for_canceled_order` |
+| [tests/Unit/BuildPaymentCheckoutPayloadTest.php](../../tests/Unit/BuildPaymentCheckoutPayloadTest.php) | 建立 payload Listener 的 queue 契約 | 不實作 ShouldQueue，付款 payload 可同步準備 | `test_listener_should_not_be_queued` |
+| [tests/Unit/BuildPaymentCheckoutPayloadTest.php](../../tests/Unit/BuildPaymentCheckoutPayloadTest.php) | PaymentInitiated 指向既有交易，Gateway 回傳付款 request | 依交易 provider 取得 Gateway；寫入 request params 與 checkout action／method，response payload 保持 null，記錄準備完成的 info | `test_handle_builds_payment_request_and_checkout_payload` |
+| [tests/Unit/BuildPaymentCheckoutPayloadTest.php](../../tests/Unit/BuildPaymentCheckoutPayloadTest.php) | PaymentInitiated 指定不存在交易 | 拋出 ModelNotFoundException，不呼叫 Gateway、不記錄準備完成 | `test_handle_throws_model_not_found_exception_when_payment_transaction_is_missing` |
+| [tests/Unit/SendOrderCreatedNotificationTest.php](../../tests/Unit/SendOrderCreatedNotificationTest.php) | OrderCreated 指向既有訂單 | 通知訂單所屬會員，通知內容包含正確 order_id | `test_handle_sends_order_created_notification_to_order_member` |
+| [tests/Unit/SendOrderCreatedNotificationTest.php](../../tests/Unit/SendOrderCreatedNotificationTest.php) | OrderCreated 指定不存在訂單 | 拋出 ModelNotFoundException | `test_handle_throws_model_not_found_exception_when_order_is_missing` |
+
+### 5. RateLimiter
+
+下表第一列位於 [tests/Feature/OrderControllerTest.php](../../tests/Feature/OrderControllerTest.php)，直接呼叫 `POST /api/orders`；其餘同檔案例以取消／付款交易寫入驗證共用 `orders` limiter，不表示逐一重驗 POST 的所有組合。門檻對應 [app/Providers/AppServiceProvider.php](../../app/Providers/AppServiceProvider.php) 的設定。
+
+| 情境 | 預期結果 | 測試方法 |
+|---|---|---|
+| 同會員一分鐘內以不同 key 建單，第 11 次請求 | 前 10 次 Service 呼叫映射為 `201`，第 11 次為 `429`，Service 總共僅呼叫 10 次；此案例未另斷言 Retry-After | `test_store_is_rate_limited_for_authenticated_member` |
+| 共用寫入分鐘額度到期 | 第 11 次取消 `429`、資料不變，61 秒後可操作 | `test_eleventh_write_in_one_minute_is_rate_limited_without_canceling_the_target_order` |
+| 訂單與付款交易寫入共用會員分鐘額度 | 跨訂單寫入共用額度，不影響讀取及其他會員 | `test_member_minute_bucket_is_shared_across_orders_and_payment_writes_but_not_reads_or_other_members` |
+| 同 IP、跨會員的每小時額度 | 第 51 次寫入 `429`；其他 IP 可操作，3601 秒後原 IP 可操作 | `test_fifty_first_write_from_the_same_ip_in_one_hour_is_rate_limited_across_members` |
+
+### 6. 尚未定義及保證範圍
+
+- 真實 SPA Cookie 登入、登出及 CSRF 拒絕尚無 POST 專屬案例，不以取消測試替代。
+- Checkout lock 等待逾時目前是 mock 分支測試；不宣稱已驗證多 process 等到逾時或超過 10 秒租期。
+- 唯一性衝突重查及部分 Service 錯誤採 mock；不宣稱是請求繞過會員鎖後的真實唯一索引競爭。
+- SQL rollback 案例皆在清空購物車前失敗，不表示 database rollback 會自動還原已清空的 cache。
+- Redis 失聯、所有死結交錯、清空 cache 後提交失敗、提交後事件／通知失敗的補償，以及外部金流付款、對帳／退款，不在上述測試完整保證內。
+- 既有驗證案例涵蓋表列輸入，不表示所有欄位型別、長度邊界或未知欄位皆有獨立案例。
+
+### 7. 驗證紀錄
+
+先前於 Laradock `workspace` 執行新增的 3 個並行案例及 5 個 rollback 案例，均通過。再以同一 runner 執行 [tests/Feature/OrderCreationConcurrencyTest.php](../../tests/Feature/OrderCreationConcurrencyTest.php)、[tests/Feature/OrderControllerTest.php](../../tests/Feature/OrderControllerTest.php)、[tests/Feature/OrderCancellationConcurrencyTest.php](../../tests/Feature/OrderCancellationConcurrencyTest.php)、[tests/Unit/OrderServiceTest.php](../../tests/Unit/OrderServiceTest.php)，結果為 **279 通過、0 失敗、2,516 assertions**。當時兩個異動的 PHP 測試檔案通過 Pint，未修改正式程式，未發現需保留的 Red 案例，亦未執行完整 test suite。
+
+本次文件整理另列出既有的付款與通知 Listener 案例；它們不在上述四類別的 279 案例驗證紀錄內，不據此宣稱本次已重跑。本次僅調整文件，未重新執行 PHPUnit 或 Pint。
+
 ## 取消訂單
 
 **API Endpoint：** `PATCH /api/orders/{order}/cancel`
