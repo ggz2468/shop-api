@@ -1,10 +1,198 @@
 # 訂單測試案例
 
+## 訂單列表
+
+**API Endpoint：** `GET /api/orders`
+
+以下表格列出身份驗證、資料歸屬、摘要格式、分頁、排序、聚合、唯讀、查詢失敗及限流的既有測試契約。方法皆位於同一個 Feature Test，包含 data provider 展開與實際 middleware 測試。
+
+- API 規格：[docs/api/orders.md](../api/orders.md)
+- 業務規則：[docs/business-rules/order-rules.md](../business-rules/order-rules.md)
+- 一般測試：[tests/Feature/OrderControllerTest.php](../../tests/Feature/OrderControllerTest.php)
+
+### 1. 身份、分頁參數與資料歸屬
+
+| 情境 | 預期結果 | 測試方法 |
+|---|---|---|
+| 未登入查詢 | `401` | `test_guest_cannot_list_orders` |
+| 本人有 3 筆、其他會員有 5 筆，指定每頁 2 筆並偽造 member_id | 僅回本人最新兩筆，total 為 3、last_page 為 2，不混入他人資料或總筆數 | `test_index_scopes_both_orders_and_pagination_totals_to_the_authenticated_member` |
+| 每頁筆數為最小值 1 | `200`、per_page 為 1、第一頁一筆，total 保留 31 | `test_index_accepts_pagination_boundaries_and_defaults_for_omitted_or_null_parameters`，`minimum page size` |
+| 每頁筆數為最大值 30 | `200`、per_page 為 30、第一頁 30 筆，total 保留 31 | 同方法，`maximum page size` |
+| 僅指定 page=2 | 每頁預設 10、current_page 為 2，取得正確筆數 | 同方法，`page only` |
+| row_counts_per_page 與 page 皆為空值 | 套用每頁 10、第一頁 | 同方法，`null parameters` |
+| row_counts_per_page 為 0、-1 或 31 | 各為 `422`，回傳該欄位錯誤 | `test_index_returns_422_for_invalid_pagination_parameters`，`zero page size`／`negative page size`／`page size above maximum` |
+| row_counts_per_page 為 abc、1.5 或陣列 | 各為 `422`，回傳該欄位錯誤 | 同方法，`non-numeric page size`／`fractional page size`／`array page size` |
+| page 為 0 或 -1 | 各為 `422`，回傳該欄位錯誤 | 同方法，`zero page`／`negative page` |
+| page 為 abc、1.5 或陣列 | 各為 `422`，回傳該欄位錯誤 | 同方法，`non-numeric page`／`fractional page`／`array page` |
+| row_counts_per_page=31 且 page=0 | `422`，同時包含兩個欄位錯誤 | 同方法，`both invalid` |
+
+### 2. 成功結果、分頁、排序與唯讀
+
+除查詢失敗案例 mock Repository 外，下表通過真實 HTTP、Service、Repository 與資料庫查詢。所有欄位與數量預期皆檢查 API 對外回應，不以 mock 資料代替實際聚合或分頁。
+
+| 情境 | 預期結果 | 測試方法 |
+|---|---|---|
+| 一筆訂單有兩筆明細、付款交易及物流 | 僅一筆列表資料，total 為 1；恰好九個摘要欄位、值與型別正確；quantity 各 3 加總為 6，不洩漏額外個資或金流欄位 | `test_index_returns_only_the_nine_order_summary_fields_with_original_types` |
+| 本人沒有訂單但其他會員有訂單 | `200`、空 data、current_page 為 1、per_page 為 10、total 為 0、last_page 為 1；from／to 與 prev／next 皆為 null | `test_index_returns_an_empty_paginated_collection_when_member_has_no_orders` |
+| 有 12 筆訂單且未指定分頁 | 第一頁 10 筆、total 為 12、last_page 為 2、from／to 為 1／10；包含 data、links、meta 標準欄位 | `test_index_uses_ten_orders_per_page_and_page_one_by_default` |
+| 有 7 筆訂單，指定每頁 2 筆、第 2 頁 | 回正確兩筆及起訖位置，total 為 7、last_page 為 4；四種分頁連結皆保留每頁筆數與正確 page | `test_index_returns_the_requested_page_and_links_preserve_page_size` |
+| 有 3 筆訂單，每頁 2 筆、查末頁 | 僅剩餘一筆、from／to 為 3、next 為 null | `test_index_returns_the_remaining_orders_on_the_last_page` |
+| 有 3 筆訂單，每頁 2 筆、查第 3 頁 | `200`、空 data；current_page 為 3、last_page 為 2、total 為 3，from／to 為 null | `test_index_returns_an_empty_page_without_losing_total_when_page_is_out_of_range` |
+| ID 與建立時間順序不一致 | 依建立時間由新到舊，不直接以 ID 代替 | `test_index_orders_by_creation_time_descending_before_id` |
+| 三筆訂單建立時間相同 | 依 ID 降冪，確保同資料集順序穩定 | `test_index_orders_by_id_descending_when_creation_times_are_equal` |
+| 分別使用所有訂單狀態、付款狀態、付款方式與配送方式 Enum case | 各訂單皆出現在列表，該欄位保留整數原值，不改為中文標籤 | `test_index_includes_orders_with_each_enum_value_without_converting_it_to_a_label`，`orderSummaryEnumProvider` 的全部 case |
+| 本人訂單明細 quantity 為 2／3、另有無明細訂單，其他會員明細為 9 | 本人商品件數分別為 5 與整數 0，不以明細筆數計算或混入他人數量 | `test_index_sums_item_quantities_per_order_and_returns_integer_zero_for_orders_without_details` |
+| 查詢 10 筆訂單，各有一筆 quantity=3 的明細 | 各訂單件數為 3；明細相關 SELECT 不超過 2 次，避免 N+1 | `test_index_does_not_query_order_details_once_per_order` |
+| 查詢既有訂單與明細 | 訂單、明細及庫存欄位快照不變；不新增付款交易或物流，訂單與明細筆數不變 | `test_index_does_not_modify_orders_inventory_or_create_payment_transactions` |
+| Repository 查詢拋出 QueryException，關閉 debug | `500` 且恰為通用 Server Error，不暴露 SQL 或內部錯誤，不偽裝成空列表；確認傳入登入會員及分頁參數 | `test_index_returns_a_generic_500_response_when_the_order_query_fails` |
+
+### 3. 真實 Session Cookie 與 CSRF
+
+以下實際取得 CSRF Cookie、透過登入 endpoint 建立 Session，保存加密 Cookie，並清除記憶中的 guard 後再次驗證。不以 `Sanctum::actingAs()` 或 PAT 代替登入。
+
+與取消測試共用 `loginMemberSession()` helper，只覆寫 CSRF middleware 在 PHPUnit 的自動略過判斷，使登入／登出的 Token 比對真正執行，不略過 Session、Cookie 或身份驗證 middleware。GET 本身不要求 XSRF header。
+
+| 情境 | 預期結果 | 測試方法 |
+|---|---|---|
+| 有效 Session Cookie、沒有 Bearer Token 與 XSRF header，本人與他人各有訂單 | `200`，僅本人訂單，total 為 1，沒有建立 PAT | `test_index_accepts_a_real_session_cookie_without_a_csrf_header` |
+| 真實登出後重用舊登入 Cookie，再改用登出回應的匿名 Session Cookie | 兩次皆 `401`，回應沒有 data，不可繼續讀取訂單 | `test_index_rejects_the_old_and_anonymous_session_after_logout` |
+
+### 4. 併發與資料一致性範圍
+
+列表不修改業務資料，不需要為此新增 checkout／取消式的多 process 寫入鎖競爭測試，也不新增 row lock 或 transaction。唯讀、聚合與穩定排序由第 2 節案例驗證。
+
+目前為 offset 分頁；建立時間與 ID 的確定排序，不等於多次翻頁間有固定資料快照。訂單在查詢間新增、取消或付款時，不承諾跨頁無重複／遺漏，亦不宣稱列表與 count 查詢為同一原子快照。
+
+### 5. RateLimiter
+
+使用實際 `orders` middleware、array cache 及測試時鐘，不 mock limiter 或預先填入計數器。每分鐘 60 次、每小時 500 次的實際門檻均以 HTTP 請求走到邊界驗證。設定對應 [app/Providers/AppServiceProvider.php](../../app/Providers/AppServiceProvider.php)。
+
+| 情境 | 預期結果 | 測試方法 |
+|---|---|---|
+| 同會員一分鐘內連續讀取列表 | 前 60 次 `200`，第 61 次 `429` 且含 Retry-After；61 秒後恢復 `200` | `test_index_is_rate_limited_after_sixty_requests_per_minute` |
+| 同會員交替讀列表與不存在的訂單詳情，各 30 次 | 列表為 `200`、詳情為 `404`，合計耗盡共用額度；下次列表為 `429` 且含 Retry-After | `test_index_shares_the_member_read_limit_with_details_across_ips_but_not_other_members` |
+| 上述會員耗盡分鐘額度後更換 IP | 仍為 `429`，不能以換 IP 繞過會員額度 | 同方法 |
+| 同 IP 切換為另一位未耗盡分鐘額度的會員 | `200`，分鐘額度依會員隔離 | 同方法 |
+| 同 IP 前 8 位會員各讀 60 次，第 9 位讀 20 次，合計 500 次 | 500 次皆 `200`；第 501 次為 `429` 且含 Retry-After，未達會員分鐘限制亦須被 IP 額度阻擋 | `test_index_enforces_the_shared_ip_hour_limit_and_recovers_after_expiry` |
+| 原 IP 耗盡小時額度後換成新會員 | 仍為 `429`，不能以換會員繞過 IP 額度 | 同方法 |
+| 該新會員改由另一個未耗盡額度的 IP 讀取 | `200`，IP 小時額度彼此隔離 | 同方法 |
+| 經過 61 秒後回到原 IP | 仍為 `429`，分鐘額度恢復不會解除小時額度 | 同方法 |
+| 原 IP 額度建立後合計經過 3601 秒 | 恢復 `200` | 同方法 |
+
+讀取與寫入額度分離另由同檔的 `test_member_minute_bucket_is_shared_across_orders_and_payment_writes_but_not_reads_or_other_members` 驗證：寫入耗盡後仍可讀取訂單詳情，不在每個讀取 endpoint 重複一整套。
+
+### 6. 尚未定義及保證範圍
+
+- Session 測試採真實登入／登出與 middleware，但以 array session backend 執行，不代表已驗證 Redis Session 故障或瀏覽器 Cookie 政策。
+- 限流以 array cache 與可控制時鐘驗證實際 HTTP 門檻，不是多節點、Redis 斷線或分散式 cache 一致性測試。
+- 查詢錯誤以 Repository mock 注入，驗證 HTTP 錯誤契約，不是實際 MySQL 斷線重連測試。
+- N+1 案例只檢查明細相關 SELECT 上限，不是延遲、記憶體或所有關聯資料的效能基準。
+- 不保證多次翻頁間的固定快照；沒有額外定義狀態篩選、cursor pagination 或新增 query parameter。
+
+## 訂單詳情
+
+**API Endpoint：** `GET /api/orders/{order}`
+
+以下表格列出身份驗證、路由、所有權、明細與收件快照、金額、付款操作資格、唯讀、N+1、查詢失敗及限流的既有測試契約。所有方法皆位於同一個 Feature Test，包含 data provider 展開與真實 Session 案例。
+
+- API 規格：[docs/api/orders.md](../api/orders.md)
+- 業務規則：[docs/business-rules/order-rules.md](../business-rules/order-rules.md)
+- 一般測試：[tests/Feature/OrderControllerTest.php](../../tests/Feature/OrderControllerTest.php)
+
+### 1. 身份、路由與訂單所有權
+
+| 情境 | 預期結果 | 測試方法 |
+|---|---|---|
+| 未登入，指定既有或不存在的合法數字 ID | 兩者皆 `401` | `test_guest_cannot_view_order_details` |
+| 指定他人訂單並偽造 member_id，或指定不存在 ID | 兩者皆 `404` | `test_show_returns_404_for_another_members_order_and_a_missing_order` |
+| 已有本人訂單，路徑為文字、-1、0 或本人 ID 加 .5 | 各為 `404`，不得轉型後誤取本人訂單 | `test_show_returns_404_for_invalid_order_identifiers`，`text`／`negative`／`zero`／`fraction` |
+| 未登入，訂單詳情及其他訂單操作路由使用 not-an-order | 各路由皆 `404`；登入後的其他操作亦拒絕文字、負數與小數，訂單不變且不新增付款交易 | `test_order_action_routes_reject_non_numeric_identifiers` |
+
+`0` 為合法數字格式但不存在的資源，與不匹配路由的文字／負數／小數分開解讀。此處不將其他訂單操作的跨路由測試描述成所有非法格式皆已在詳情登入前後逐一重驗。
+
+### 2. 成功結果、歷史快照與唯讀
+
+#### 回應、明細及金額
+
+以下案例通過實際 HTTP、Service、Repository 與 Resource，不以 mock 資料代替對外回應。
+
+| 情境 | 預期結果 | 測試方法 |
+|---|---|---|
+| 宅配訂單含單價 400、數量 2、小計 800 的明細，總額 880、稅額 39、運費 80，另有多筆交易及物流 | 恰為 data 包裝的約定欄位與型別，保留明細／收件快照及 null 門市欄位；件數 2、小計 800、總額 880，不重複加稅、不暴露完整交易或物流 | `test_show_returns_the_exact_order_detail_contract_and_original_types` |
+| 本人指定訂單有 quantity 2／3、小計 600／900；本人其他訂單與他人訂單亦有明細 | 僅指定訂單兩筆明細、件數 5、小計 1,500，保留其總額、稅額及運費，不混入其他明細 | `test_show_aggregates_only_the_requested_orders_details` |
+| 明細單價乘數量分別為 600／900，但保存的小計為 550／800 | 明細保留 550／800，items_subtotal 為 1,350，總額 1,430、運費 80、稅額 65 不重算 | `test_show_uses_stored_item_subtotals_instead_of_recalculating_them` |
+| 無明細但訂單已保存金額 | items 為空陣列、件數及小計為整數 0，總額 880、運費 80、稅額 39 保持不變 | `test_show_returns_empty_items_and_zero_aggregates_without_recalculating_stored_amounts` |
+| 超商取貨分別為 UNIMART、FAMI、HILIFE | 保留各門市類型、代碼、名稱、地址及收件姓名／電話，宅配郵遞區號與地址為 null，不改為額外巢狀結構 | `test_show_returns_convenience_store_snapshots`，`orderDetailStoreTypeProvider` 全部 case |
+| 商品名稱、SKU、價格、規格顏色／尺寸及會員電話／地址已修改 | 仍回原商品、金額與收件快照，不使用最新資料覆蓋 | `test_show_preserves_snapshots_after_product_spec_and_member_changes` |
+| 商品與商品規格已軟刪除 | 仍回 `200`、保留明細規格 ID、名稱、單價及原小計 | `test_show_preserves_items_when_the_product_and_variant_are_soft_deleted` |
+| 舊明細的 SKU、顏色、尺寸皆為 null | 三個欄位維持 null，不以目前商品資料補值 | `test_show_preserves_null_optional_item_snapshot_fields` |
+| 分別使用所有訂單狀態、付款狀態、付款方式與配送方式 Enum case | 各訂單皆可查詢，對應欄位保留整數原值，不改為中文標籤 | `test_show_preserves_each_order_enum_value`，`orderSummaryEnumProvider` 全部 case |
+
+#### 付款交易新增資格
+
+以下透過詳情回應驗證 `actions.can_create_payment_transaction`，沿用付款交易建立流程的規則，不代表 GET 會建立付款交易。
+
+| 情境 | 預期結果 | 測試方法 |
+|---|---|---|
+| 沒有付款交易，遍歷所有訂單狀態 × 付款狀態 | actions 僅包含布林資格；僅 STOCKING 且 UNPAID／FAILED 為 true，其餘皆 false | `test_show_payment_transaction_action_matches_order_state`，`paymentTransactionCreationOrderStateProvider` 全部組合 |
+| STOCKING、付款分別為 UNPAID／FAILED，各搭配所有付款交易狀態 | PENDING／AUTHORIZED 為 false；PAID／FAILED／CANCELED／REFUNDED／EXPIRED 不單獨阻擋；不回傳 payment_transactions | `test_show_payment_transaction_action_matches_transaction_state`，`paymentTransactionCreationStateProvider` 全部組合 |
+| 較舊交易為 PENDING 或 AUTHORIZED，較新交易為 FAILED | 兩種情境皆 false，不得只檢查最新交易 | `test_show_payment_transaction_action_checks_all_active_transactions` |
+| 本訂單可新增，但本人另一筆訂單有 PENDING、其他會員訂單有 AUTHORIZED | 本訂單仍為 true，不混入其他訂單的交易 | `test_show_payment_transaction_action_ignores_other_orders_transactions` |
+| 付款失敗訂單含失敗交易，連續讀取兩次 | 皆為 true；訂單及交易完整快照不變，仍只有一筆交易，不派送 OrderCreated／PaymentInitiated | `test_show_payment_transaction_action_is_read_only` |
+
+PAID 交易搭配 UNPAID／FAILED 訂單的 fixture 用來固定既有資格規則，不表示這類狀態不一致在正常付款流程中應發生，亦不構成對帳或重複收款防護的額外保證。
+
+#### 唯讀、N+1 與查詢失敗
+
+| 情境 | 預期結果 | 測試方法 |
+|---|---|---|
+| 訂單含十筆明細 | 回十筆；明細及目前商品／規格相關 SELECT 合計不超過 3 次，不能逐筆查詢 | `test_show_loads_multiple_items_without_per_item_queries` |
+| 同一訂單連續讀取兩次 | 訂單、明細與庫存快照不變，訂單及明細筆數不變；不建立付款或物流、不派送 OrderCreated | `test_show_is_read_only_when_requested_repeatedly` |
+| 真正到達明細 SELECT 後，由 query listener 拋出 QueryException，關閉 debug | 確認有執行明細查詢；`500` 且恰為通用 Server Error，不暴露 SQL 或將失敗當作空明細 | `test_show_returns_a_generic_500_when_loading_details_fails` |
+| mock 付款資格 Repository 查詢拋出 QueryException，關閉 debug | `500` 且恰為通用 Server Error，不以資格 true／false 或缺少交易的假象掩蓋錯誤 | `test_show_returns_a_generic_500_when_payment_transaction_action_query_fails` |
+
+### 3. 真實 Session Cookie 與 CSRF
+
+與列表及取消共用 `loginMemberSession()` helper，實際取得 CSRF Cookie、透過登入 endpoint 建立 Session、保存加密 Cookie，並清除記憶中的 guard 後再次驗證。不使用 `Sanctum::actingAs()` 或 PAT 代替登入。
+
+只覆寫 CSRF middleware 在 PHPUnit 的自動略過判斷，使登入／登出的 Token 比對真正執行，不略過 Session、Cookie 或身份驗證 middleware。清除登入用 header 後，詳情 GET 本身不攜帶 XSRF header。
+
+| 情境 | 預期結果 | 測試方法 |
+|---|---|---|
+| 真實 Session 登入，沒有 Bearer Token 與 XSRF header | 本人訂單 `200` 且 ID 正確；同 Session 查他人訂單為 `404`、無 data；不建立 PAT | `test_show_accepts_a_real_session_cookie_without_a_csrf_header_and_rejects_another_members_order` |
+| 真實登出後重用舊登入 Cookie，再改用登出回應的匿名 Session Cookie 讀取原本人訂單 | 兩次皆 `401`，回應無 data，不洩漏訂單內容 | `test_show_rejects_the_old_and_anonymous_session_after_logout` |
+
+### 4. 併發與資料一致性範圍
+
+詳情為唯讀，不增加 checkout／取消式的 transaction、rollback 或多 process 寫入鎖競爭測試。唯讀、快照與付款操作資格由第 2 節案例驗證。
+
+操作資格是查詢提示，不能當作稍後 POST 的授權憑證。訂單載入後，付款交易或訂單狀態仍可能改變；POST 必須自行鎖定並重驗，不要求 GET 持鎖保留資格，也不宣稱回應為跨多個查詢的原子快照。
+
+### 5. RateLimiter
+
+詳情直接驗證會員分鐘門檻，其餘隔離與恢復沿用同檔列表的共用讀取 limiter 案例，不為每個 GET 重複一整套。門檻對應 [app/Providers/AppServiceProvider.php](../../app/Providers/AppServiceProvider.php)。
+
+| 情境 | 預期結果 | 測試方法 |
+|---|---|---|
+| 同會員一分鐘內連續讀取同一張本人訂單 | 前 60 次 `200`，第 61 次 `429` 且含 Retry-After | `test_show_is_rate_limited_after_sixty_requests_per_minute` |
+| 列表與不存在的詳情交替各 30 次 | 共用分鐘額度；換 IP 不解除，同 IP 其他會員仍可讀列表 | `test_index_shares_the_member_read_limit_with_details_across_ips_but_not_other_members` |
+| 會員分鐘額度到期 | 列表第 61 次 `429`，61 秒後恢復 `200` | `test_index_is_rate_limited_after_sixty_requests_per_minute` |
+| 同 IP 跨會員讀取 500 次，換會員、換 IP 及等待到期 | 第 501 次 `429`、含 Retry-After；換會員或只等待 61 秒不解除，另一 IP 可讀；原 IP 合計 3601 秒後恢復 | `test_index_enforces_the_shared_ip_hour_limit_and_recovers_after_expiry` |
+| 訂單寫入分鐘額度耗盡 | 寫入被拒絕，仍可讀取本人訂單詳情，讀寫額度分離 | `test_member_minute_bucket_is_shared_across_orders_and_payment_writes_but_not_reads_or_other_members` |
+
+### 6. 尚未定義及保證範圍
+
+- Session 案例採真實登入／登出與 middleware，但以 array session backend 執行，不代表已驗證 Redis Session 故障或瀏覽器 Cookie 政策。
+- 共用限流案例使用 array cache 與可控制時鐘，不是分散式 cache 或多節點限流整合測試。
+- 明細錯誤是成功 SELECT 後注入例外，付款資格錯誤為 Repository mock；兩者驗證 HTTP 契約，不是 MySQL 真實斷線測試。
+- N+1 僅限制明細／商品相關 SELECT 次數，不是整體延遲、記憶體或所有關聯資料查詢數的保證。
+- 不額外定義商品硬刪除、訂單／付款事實不一致時的修復、外部金流對帳或查詢後寫入必定成功的保證。
+
 ## 建立訂單
 
 **API Endpoint：** `POST /api/orders`
 
-以下表格列出已實作的測試契約，涵蓋身份驗證、參數、建單結果、付款事件、冪等、rollback、並行及限流。建立 API 與所列測試已實作；執行紀錄見本節第 7 節。
+以下表格列出已實作的測試契約，涵蓋身份驗證、參數、建單結果、付款事件、冪等、rollback、並行及限流。
 
 - API 規格：[docs/api/orders.md](../api/orders.md)
 - 業務規則：[docs/business-rules/order-rules.md](../business-rules/order-rules.md)
@@ -186,17 +374,11 @@ fixture 完成後停止子行程，刪除自身資料及 cache 目錄，不全�
 - Redis 失聯、所有死結交錯、清空 cache 後提交失敗、提交後事件／通知失敗的補償，以及外部金流付款、對帳／退款，不在上述測試完整保證內。
 - 既有驗證案例涵蓋表列輸入，不表示所有欄位型別、長度邊界或未知欄位皆有獨立案例。
 
-### 7. 驗證紀錄
-
-先前於 Laradock `workspace` 執行新增的 3 個並行案例及 5 個 rollback 案例，均通過。再以同一 runner 執行 [tests/Feature/OrderCreationConcurrencyTest.php](../../tests/Feature/OrderCreationConcurrencyTest.php)、[tests/Feature/OrderControllerTest.php](../../tests/Feature/OrderControllerTest.php)、[tests/Feature/OrderCancellationConcurrencyTest.php](../../tests/Feature/OrderCancellationConcurrencyTest.php)、[tests/Unit/OrderServiceTest.php](../../tests/Unit/OrderServiceTest.php)，結果為 **279 通過、0 失敗、2,516 assertions**。當時兩個異動的 PHP 測試檔案通過 Pint，未修改正式程式，未發現需保留的 Red 案例，亦未執行完整 test suite。
-
-本次文件整理另列出既有的付款與通知 Listener 案例；它們不在上述四類別的 279 案例驗證紀錄內，不據此宣稱本次已重跑。本次僅調整文件，未重新執行 PHPUnit 或 Pint。
-
 ## 取消訂單
 
 **API Endpoint：** `PATCH /api/orders/{order}/cancel`
 
-以下表格列出已實作的測試契約。取消 API 及相關跨流程防護已完成實作，Outside-in TDD 已進入 Green；執行紀錄見第 7 節。
+以下表格列出已實作的測試契約。取消 API 及相關跨流程防護已完成實作，Outside-in TDD 已進入 Green。
 
 - API 規格：[docs/api/orders.md](../api/orders.md)
 - 業務規則：[docs/business-rules/order-rules.md](../business-rules/order-rules.md)
@@ -321,15 +503,3 @@ fixture 完成後停止子行程，刪除自身資料及 cache 目錄，不全�
 - 物流取消後回呼的 `200` 僅是確認通知且不改本機資料，不表示已撤銷供應商的物流單。
 - 鎖競爭案例驗證指定先後順序；不宣稱已窮舉所有故障與死結組合。
 - 自動化測試涵蓋本文件列出的情境，不代表外部供應商的對帳／退款或所有故障情境皆已驗證。
-
-### 7. 驗證紀錄
-
-2026-11-14 於 Laradock `workspace` container 執行：
-
-- 實作前：取消相關兩個測試類別為 169 通過、87 失敗，確認原先 Red 基準。
-- 實作後：完整 `php artisan test --compact` 為 **648 通過、0 失敗、5,289 assertions**。
-- 本次異動的 PHP 檔案通過 Laravel Pint 格式檢查。
-
-Green 驗證同時修正測試機制：快照先重新讀取 MySQL 已儲存的資料，避免 JSON 正規化及預設欄位產生假差異；process 同步檢查包含已緩存的 marker，避免漏讀後誤判逾時。未放寬資格、庫存、rollback 或並行業務斷言。
-
-2026-11-15 補上上述 Listener 局部測試，共新增 11 個案例（含 data provider 展開）。於 Laradock `workspace` 執行四個對應測試類別，結果為 **29 通過、0 失敗、129 assertions**；四個異動測試檔案通過 Pint。此次僅新增測試與更新文件，未修改正式程式，亦未重新執行完整套件。

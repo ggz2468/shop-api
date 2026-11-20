@@ -1,5 +1,163 @@
 # 訂單 API
 
+## 訂單列表
+
+```http
+GET /api/orders
+```
+
+### 身份驗證與參數
+
+- 需要 `auth:sanctum`，SPA 以 Session Cookie 驗證，不要求 Bearer Token。
+- GET 不要求 `X-XSRF-TOKEN` header；SPA 登入等寫入操作仍須遵循既有 CSRF 流程。
+- 僅查詢登入會員的訂單，query string 的 `member_id` 不會改變查詢歸屬。
+- 套用 `throttle:orders` 的讀取額度，不使用寫入額度。
+
+| Query parameter | 必要性 | 格式與限制 |
+|---|---|---|
+| `row_counts_per_page` | 選填 | 整數，1 至 30；省略或空值時預設 10 |
+| `page` | 選填 | 整數，至少 1；省略或空值時預設 1 |
+
+不需要 request body。非法分頁參數回傳 `422`，不自動截斷或修正成合法值。
+
+### 可查詢條件
+
+會員已登入且分頁參數合法。沒有訂單或請求頁碼超出末頁，皆回傳 `200` 空資料，不以 `404` 處理。
+
+不依訂單／付款狀態或付款／配送方式排除訂單，所有既有 Enum 值皆可出現在列表。
+
+### 回應
+
+| HTTP status | 情境 |
+|---|---|
+| `200` | 成功取得列表，包含空列表及超出末頁 |
+| `401` | 未登入或 Session 已失效 |
+| `422` | 分頁參數驗證失敗 |
+| `429` | 超過讀取限流，包含 `Retry-After` |
+| `500` | 查詢失敗，回傳通用錯誤，不偽裝成空列表或暴露內部資訊 |
+
+成功回應使用 `data`、`links`、`meta` 分頁結構，不額外包裝 `message`。每筆 `data` 僅公開以下九個摘要欄位：
+
+| 欄位 | 型別與說明 |
+|---|---|
+| `id` | 整數，訂單 ID |
+| `number` | 字串，訂單編號 |
+| `created_at` | ISO 8601 日期時間字串；資料無建立時間時可為 null |
+| `total_amount` | 整數，訂單儲存的總額 |
+| `status` | 整數，訂單狀態 Enum 原值 |
+| `payment_status` | 整數，付款狀態 Enum 原值 |
+| `payment_method` | 整數，付款方式 Enum 原值 |
+| `shipping_method` | 整數，配送方式 Enum 原值 |
+| `item_quantity` | 整數，該訂單明細 quantity 加總；無明細為 0 |
+
+不回傳收件個資、完整明細、付款 payload 或物流資料，也不將 Enum 轉為中文標籤。
+
+- 排序為 `created_at` 降冪，再以 `id` 降冪處理同時間訂單。
+- `links` 包含 `first`、`last`、`prev`、`next`；分頁 URL 保留每頁筆數等 query string，無前／後頁時對應值為 null。
+- `meta` 包含 `current_page`、`from`、`last_page`、`links`、`path`、`per_page`、`to`、`total`。
+- 沒有訂單時，`data` 為空陣列、`total` 為 0、`last_page` 為 1，`from`／`to` 為 null。
+- 超出末頁時，保留實際 `total`、`last_page` 與請求的 `current_page`，`data` 為空陣列、`from`／`to` 為 null。
+
+驗證失敗包含 `message` 與 `errors`；關閉 debug 時，查詢失敗為 `{"message":"Server Error"}`。
+
+### 副作用
+
+查詢維持唯讀，不修改訂單、明細或庫存，也不建立付款交易或物流。限流額度仍會依 middleware 計算。
+
+商品件數須批次聚合，避免每筆訂單另查明細產生 N+1。查詢不要求結帳／取消用的 row lock，也不提供跨多次翻頁的固定資料快照。
+
+### 限流
+
+目前為每會員每分鐘 60 次、每 IP 每小時 500 次，與訂單詳情及其他套用同一 `orders` limiter 的 GET／HEAD 共用讀取額度，與寫入額度分離。
+
+會員分鐘額度不因更換 IP 重置；同 IP 的其他會員有自己的分鐘額度，但共用 IP 小時額度。超限回傳 `429` 與 `Retry-After`，相應額度到期後恢復；正式數值以實際設定為準。
+
+### 規格狀態與相關文件
+
+訂單列表及 Session、分頁、資料隔離、唯讀、N+1 與讀取限流案例已實作。
+
+- [業務規則與查詢範圍](../business-rules/order-rules.md)
+- [測試案例與 PHPUnit 對應](../test-cases/orders.md)
+- [Session／CSRF 架構](../architecture/authentication.md)
+
+## 訂單詳情
+
+```http
+GET /api/orders/{order}
+```
+
+### 身份驗證與參數
+
+- 需要 `auth:sanctum`，SPA 以 Session Cookie 驗證，不要求 Bearer Token。
+- GET 不要求 `X-XSRF-TOKEN` header；登入與登出本身仍遵循既有 CSRF 流程。
+- `{order}` 僅接受路由限定的數字格式；`0` 等不存在的數字 ID 回傳 `404`。
+- 不需要 request body；query string 的 `member_id` 不得改變訂單歸屬。
+- 套用 `throttle:orders` 的讀取額度。
+
+### 可查詢條件
+
+會員已登入且指定訂單屬於本人。訂單不存在與屬於其他會員皆回傳 `404`，不公開他人訂單內容。
+
+所有既有訂單／付款狀態及付款／配送方式皆可查詢，包括已取消、已完成與已退款。商品或商品規格軟刪除不影響歷史明細的顯示。
+
+### 回應
+
+| HTTP status | 情境 |
+|---|---|
+| `200` | 成功取得本人訂單 |
+| `401` | 未登入或 Session 已失效 |
+| `404` | 路徑格式非法、訂單不存在或不屬於登入會員 |
+| `429` | 超過讀取限流，包含 `Retry-After` |
+| `500` | 明細或付款操作資格查詢失敗，回傳通用錯誤，不暴露內部資訊 |
+
+成功回應只包裝 `data`，不額外加入 `message`、分頁資料、付款交易或物流紀錄：
+
+| 欄位 | 型別與說明 |
+|---|---|
+| `id`、`number` | 整數訂單 ID、字串訂單編號 |
+| `created_at` | ISO 8601 日期時間字串；資料無建立時間時可為 null |
+| `status`、`payment_status`、`payment_method`、`shipping_method` | 整數 Enum 原值，不轉為中文標籤 |
+| `item_quantity` | 整數，該訂單明細 quantity 加總 |
+| `items_subtotal` | 整數，該訂單已儲存的明細 subtotal 加總，不以單價乘數量重算 |
+| `shipping_fee`、`tax_amount`、`total_amount` | 整數，訂單儲存的運費、內含稅額及總額，不重新計算或重複加稅 |
+| `recipient_name`、`recipient_phone`、`recipient_zip_code`、`recipient_address` | 訂單保存的收件快照，不使用會員最新資料補值；選填欄位可為 null |
+| `store_type`、`store_code`、`store_name`、`store_address` | 訂單保存的超商門市快照，未提供時可為 null |
+| `actions.can_create_payment_transaction` | 布林值，查詢當下是否可新增付款交易 |
+| `items` | 訂單商品快照陣列 |
+| `items[].product_variant_id` | 整數，商品規格 ID |
+| `items[].product_name`、`product_sku`、`product_color`、`product_size` | 商品名稱、SKU、顏色與整數尺寸快照；舊資料的 SKU、顏色及尺寸可為 null |
+| `items[].product_price`、`quantity`、`subtotal` | 整數，保存的單價、數量與小計 |
+
+無明細時 `items` 為空陣列、`item_quantity` 與 `items_subtotal` 皆為整數 0，仍保留已儲存的訂單金額。商品、規格或會員資料更新後，回應仍使用原訂單快照。
+
+`actions.can_create_payment_transaction` 僅在訂單備貨中、付款未付款或失敗，且沒有任何 PENDING／AUTHORIZED 付款交易時為 true。須檢查該訂單的所有交易，不只最新一筆；其他訂單的交易不影響資格。其餘交易狀態不單獨阻擋，訂單／付款狀態仍須符合條件。
+
+此布林值不保證稍後 POST 建立付款交易必定成功；寫入時仍須取得訂單鎖並重新檢查資格。資格查詢失敗須回傳 `500`，不能默認為 true 或 false。
+
+關閉 debug 時，查詢失敗為 `{"message":"Server Error"}`。非法路徑格式在登入前後皆不匹配路由而為 `404`；合法數字路徑未登入時為 `401`。
+
+### 副作用
+
+查詢維持唯讀，不修改訂單、明細、庫存或歷史付款交易，不重設付款失敗狀態，不建立付款／物流，也不派送建單或付款初始化事件。限流額度仍會依 middleware 計算。
+
+明細取自已儲存的快照，不應逐筆查詢目前商品或規格而產生 N+1。GET 不取得結帳或取消使用的寫入鎖，也不保證訂單與資格查詢之間的原子快照。
+
+### 限流
+
+目前為每會員每分鐘 60 次、每 IP 每小時 500 次，與訂單列表等套用相同 `orders` limiter 的 GET／HEAD 共用額度，與寫入額度分離。
+
+會員分鐘額度不因更換 IP 重置，IP 小時額度不因更換會員重置；超限回傳 `429` 與 `Retry-After`，相應額度到期後恢復。正式數值以實際設定為準。
+
+### 規格狀態與相關文件
+
+訂單詳情、歷史快照、付款操作資格、唯讀、N+1、Session 與限流案例已實作。
+
+- [業務規則與查詢範圍](../business-rules/order-rules.md)
+- [測試案例與 PHPUnit 對應](../test-cases/orders.md)
+- [Session／CSRF 架構](../architecture/authentication.md)
+
+目前操作資格為查詢提示，不代表庫存保留、付款授權或稍後的寫入資格保證。
+
 ## 建立訂單
 
 ```http
@@ -143,7 +301,7 @@ PATCH /api/orders/{order}/cancel
 
 ### 規格狀態與相關文件
 
-取消功能及對應的跨流程並行防護已完成實作，Outside-in TDD 測試已進入 Green。測試執行紀錄見 [docs/test-cases/orders.md](../test-cases/orders.md)。
+取消功能及對應的跨流程並行防護已完成實作，Outside-in TDD 測試已進入 Green。測試案例與覆蓋範圍見 [docs/test-cases/orders.md](../test-cases/orders.md)。
 
 - [業務規則與跨流程防禦](../business-rules/order-rules.md)
 - [測試案例與 PHPUnit 對應](../test-cases/orders.md)

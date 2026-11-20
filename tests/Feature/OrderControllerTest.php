@@ -690,6 +690,56 @@ class OrderControllerTest extends TestCase
     }
 
     /**
+     * 訂單詳情: 真實 Session 登入後無需 Bearer Token 或 XSRF header，本人訂單可讀取但他人訂單仍為 404。
+     */
+    public function test_show_accepts_a_real_session_cookie_without_a_csrf_header_and_rejects_another_members_order(): void
+    {
+        config()->set('cache.default', 'array');
+        $member = Member::factory()->create();
+        $order = Order::factory()->for($member)->create();
+        $otherOrder = Order::factory()->create();
+        $this->loginMemberSession($member);
+        $this->flushHeaders();
+        $this->withHeader('Origin', 'http://localhost');
+        $this->app['auth']->forgetGuards();
+
+        $this->getJson("/api/orders/{$order->id}")->assertOk()
+            ->assertJsonPath('data.id', $order->id);
+
+        $this->app['auth']->forgetGuards();
+        $this->getJson("/api/orders/{$otherOrder->id}")->assertNotFound()
+            ->assertJsonMissingPath('data');
+        $this->assertSame(0, $member->tokens()->count());
+    }
+
+    /**
+     * 訂單詳情: 登出後重用舊 Cookie 或使用匿名 Session 皆為 401，不得洩漏原會員的訂單資料。
+     */
+    public function test_show_rejects_the_old_and_anonymous_session_after_logout(): void
+    {
+        config()->set('cache.default', 'array');
+        $member = Member::factory()->create();
+        $order = Order::factory()->for($member)->create();
+        $cookies = $this->loginMemberSession($member);
+        $logout = $this->withHeader('X-XSRF-TOKEN', $cookies['XSRF-TOKEN'])
+            ->postJson('/api/auth/logout')->assertOk();
+        $this->flushHeaders();
+        $this->withHeader('Origin', 'http://localhost');
+        $this->app['auth']->forgetGuards();
+
+        $this->withUnencryptedCookies($cookies)
+            ->getJson("/api/orders/{$order->id}")->assertUnauthorized()
+            ->assertJsonMissingPath('data');
+
+        $this->app['auth']->forgetGuards();
+        $this->withUnencryptedCookies([
+            config('session.cookie') => $logout->getCookie(config('session.cookie'), false)->getValue(),
+            'XSRF-TOKEN' => $logout->getCookie('XSRF-TOKEN', false)->getValue(),
+        ])->getJson("/api/orders/{$order->id}")->assertUnauthorized()
+            ->assertJsonMissingPath('data');
+    }
+
+    /**
      * 訂單列表: 未驗證的訪客應收到 401，無法查詢會員訂單。
      */
     public function test_guest_cannot_list_orders(): void
@@ -1138,7 +1188,7 @@ class OrderControllerTest extends TestCase
     }
 
     /**
-     * 訂單列表: 同一會員每分鐘可讀取六十次，第六十一次應回傳 429 與重試等待時間。
+     * 訂單列表: 同一會員每分鐘可讀取六十次，第六十一次應回傳 429，等待額度到期後恢復。
      */
     public function test_index_is_rate_limited_after_sixty_requests_per_minute(): void
     {
@@ -1151,6 +1201,117 @@ class OrderControllerTest extends TestCase
 
         $this->getJson('/api/orders')->assertTooManyRequests()
             ->assertHeader('Retry-After');
+
+        $this->travel(61)->seconds();
+        $this->getJson('/api/orders')->assertOk();
+    }
+
+    /**
+     * 訂單列表: 真實 Session 登入後不需要 Bearer Token 或 XSRF header，且只取得本人訂單。
+     */
+    public function test_index_accepts_a_real_session_cookie_without_a_csrf_header(): void
+    {
+        config()->set('cache.default', 'array');
+        $member = Member::factory()->create();
+        $order = Order::factory()->for($member)->create();
+        Order::factory()->create();
+        $this->loginMemberSession($member);
+        $this->flushHeaders();
+        $this->withHeader('Origin', 'http://localhost');
+        $this->app['auth']->forgetGuards();
+
+        $this->getJson('/api/orders')->assertOk()
+            ->assertJsonCount(1, 'data')
+            ->assertJsonPath('data.0.id', $order->id)
+            ->assertJsonPath('meta.total', 1);
+
+        $this->assertSame(0, $member->tokens()->count());
+    }
+
+    /**
+     * 訂單列表: 登出後重用舊 Cookie 或使用匿名 Session 皆為 401，不可繼續讀取訂單。
+     */
+    public function test_index_rejects_the_old_and_anonymous_session_after_logout(): void
+    {
+        config()->set('cache.default', 'array');
+        $member = Member::factory()->create();
+        Order::factory()->for($member)->create();
+        $cookies = $this->loginMemberSession($member);
+        $logout = $this->withHeader('X-XSRF-TOKEN', $cookies['XSRF-TOKEN'])
+            ->postJson('/api/auth/logout')->assertOk();
+        $this->flushHeaders();
+        $this->withHeader('Origin', 'http://localhost');
+        $this->app['auth']->forgetGuards();
+
+        $this->withUnencryptedCookies($cookies)
+            ->getJson('/api/orders')->assertUnauthorized()
+            ->assertJsonMissingPath('data');
+
+        $this->app['auth']->forgetGuards();
+        $this->withUnencryptedCookies([
+            config('session.cookie') => $logout->getCookie(config('session.cookie'), false)->getValue(),
+            'XSRF-TOKEN' => $logout->getCookie('XSRF-TOKEN', false)->getValue(),
+        ])->getJson('/api/orders')->assertUnauthorized()
+            ->assertJsonMissingPath('data');
+    }
+
+    /**
+     * 訂單讀取: 列表與詳情共用會員分鐘額度，換 IP 不可繞過，但同 IP 的其他會員不受影響。
+     */
+    public function test_index_shares_the_member_read_limit_with_details_across_ips_but_not_other_members(): void
+    {
+        config()->set('cache.default', 'array');
+        $this->freezeTime();
+        $member = Member::factory()->create();
+        Sanctum::actingAs($member);
+        $this->withServerVariables(['REMOTE_ADDR' => '192.0.2.21']);
+
+        for ($attempt = 0; $attempt < 30; $attempt++) {
+            $this->getJson('/api/orders')->assertOk();
+            $this->getJson('/api/orders/0')->assertNotFound();
+        }
+
+        $this->getJson('/api/orders')->assertTooManyRequests()
+            ->assertHeader('Retry-After');
+        $this->withServerVariables(['REMOTE_ADDR' => '192.0.2.22'])
+            ->getJson('/api/orders')->assertTooManyRequests();
+
+        Sanctum::actingAs(Member::factory()->create());
+        $this->withServerVariables(['REMOTE_ADDR' => '192.0.2.21'])
+            ->getJson('/api/orders')->assertOk();
+    }
+
+    /**
+     * 訂單讀取: 同 IP 跨會員每小時最多五百次，換會員或只等待分鐘額度不會解除，其他 IP 與小時到期後可操作。
+     */
+    public function test_index_enforces_the_shared_ip_hour_limit_and_recovers_after_expiry(): void
+    {
+        config()->set('cache.default', 'array');
+        $this->freezeTime();
+        $this->withServerVariables(['REMOTE_ADDR' => '192.0.2.31']);
+
+        for ($memberIndex = 0; $memberIndex < 9; $memberIndex++) {
+            Sanctum::actingAs(Member::factory()->create());
+            $attempts = $memberIndex < 8 ? 60 : 20;
+
+            for ($attempt = 0; $attempt < $attempts; $attempt++) {
+                $this->getJson('/api/orders')->assertOk();
+            }
+        }
+
+        $this->getJson('/api/orders')->assertTooManyRequests()
+            ->assertHeader('Retry-After');
+        Sanctum::actingAs(Member::factory()->create());
+        $this->getJson('/api/orders')->assertTooManyRequests();
+        $this->withServerVariables(['REMOTE_ADDR' => '192.0.2.32'])
+            ->getJson('/api/orders')->assertOk();
+
+        $this->travel(61)->seconds();
+        $this->withServerVariables(['REMOTE_ADDR' => '192.0.2.31'])
+            ->getJson('/api/orders')->assertTooManyRequests();
+
+        $this->travel(3540)->seconds();
+        $this->getJson('/api/orders')->assertOk();
     }
 
     /**
@@ -2653,7 +2814,7 @@ class OrderControllerTest extends TestCase
     {
         $this->setUpCancellationTest();
         [$order, $variant, $payment] = $this->createCancelableOrder();
-        $cookies = $this->loginCancellationSession($order->member);
+        $cookies = $this->loginMemberSession($order->member);
 
         $this->withHeader('X-XSRF-TOKEN', $cookies['XSRF-TOKEN'])
             ->patchJson("/api/orders/{$order->id}/cancel")->assertOk();
@@ -2672,7 +2833,7 @@ class OrderControllerTest extends TestCase
     {
         $this->setUpCancellationTest();
         [$order, $variant, $payment] = $this->createCancelableOrder();
-        $this->loginCancellationSession($order->member);
+        $this->loginMemberSession($order->member);
         $this->flushHeaders();
         $this->withHeader('Origin', 'http://localhost');
         if ($token !== null) {
@@ -2700,7 +2861,7 @@ class OrderControllerTest extends TestCase
     {
         $this->setUpCancellationTest();
         [$order, $variant, $payment] = $this->createCancelableOrder();
-        $cookies = $this->loginCancellationSession($order->member);
+        $cookies = $this->loginMemberSession($order->member);
         $logout = $this->withHeader('X-XSRF-TOKEN', $cookies['XSRF-TOKEN'])
             ->postJson('/api/auth/logout')->assertOk();
         $this->app['auth']->forgetGuards();
@@ -2799,7 +2960,7 @@ class OrderControllerTest extends TestCase
         $this->assertSame(12, $variant->refresh()->stock_quantity);
     }
 
-    private function loginCancellationSession(Member $member): array
+    private function loginMemberSession(Member $member): array
     {
         config()->set('session.driver', 'array');
         config()->set('sanctum.stateful', ['localhost']);
